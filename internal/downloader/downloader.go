@@ -14,10 +14,9 @@ type Options struct {
 	OutputDir  string
 	CookiePath string
 	BinDir     string
+	UseDeno    bool
 }
 
-// Run executes yt-dlp and calls onLog for every line of output.
-// Returns the path to the downloaded mp3 by diffing the output dir.
 func Run(opts Options, onLog func(string)) (string, error) {
 	before, err := snapMp3s(opts.OutputDir)
 	if err != nil {
@@ -25,7 +24,6 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	}
 
 	ytDlp := filepath.Join(opts.BinDir, "yt-dlp.exe")
-
 	args := []string{
 		opts.URL,
 		"-f", "bestaudio",
@@ -33,23 +31,24 @@ func Run(opts Options, onLog func(string)) (string, error) {
 		"--audio-format", "mp3",
 		"--audio-quality", "0",
 		"--output", filepath.Join(opts.OutputDir, "%(title)s.%(ext)s"),
-
-		"--embed-thumbnail",           // embed cover
-		"--convert-thumbnails", "jpg", // ensure compatible format
-
-		"--js-runtime", "deno",
-		"--remote-components", "ejs:github",
+		"--embed-thumbnail",
+		"--convert-thumbnails", "jpg",
 		"--no-playlist",
 	}
+
+	if opts.UseDeno {
+		args = append(args, "--js-runtime", "deno", "--remote-components", "ejs:github")
+	}
+
 	if opts.CookiePath != "" {
 		args = append(args, "--cookies", opts.CookiePath)
 	}
 
 	cmd := exec.Command(ytDlp, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-    HideWindow:    true,
-    CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-}
+		HideWindow:    true,
+		CreationFlags: 0x08000000,
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -91,6 +90,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 			return filepath.Join(opts.OutputDir, name), nil
 		}
 	}
+
 	return "", fmt.Errorf("download finished but no new mp3 found in %s", opts.OutputDir)
 }
 

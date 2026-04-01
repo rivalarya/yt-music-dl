@@ -1,6 +1,8 @@
 import {
   CheckDeps,
-  InstallDeps,
+  InstallYtDlp,
+  InstallFfmpeg,
+  InstallDeno,
   GetSettings,
   SaveSettings,
   SaveCookieFile,
@@ -10,12 +12,29 @@ import {
   SelectOutputDir,
 } from "../wailsjs/go/main/App";
 
-export { CheckDeps, InstallDeps, GetSettings, SaveSettings, SaveCookieFile, SearchDeezer, StartDownload, TagFile, SelectOutputDir };
+export {
+  CheckDeps,
+  InstallYtDlp,
+  InstallFfmpeg,
+  InstallDeno,
+  GetSettings,
+  SaveSettings,
+  SaveCookieFile,
+  SearchDeezer,
+  StartDownload,
+  TagFile,
+  SelectOutputDir,
+};
 
 export type DepsStatus = {
   ytDlp: boolean;
+  ytDlpVersion: string;
   ffmpeg: boolean;
+  ffmpegSystem: boolean;
+  ffmpegVersion: string;
   deno: boolean;
+  denoSystem: boolean;
+  denoVersion: string;
 };
 
 export type Track = {

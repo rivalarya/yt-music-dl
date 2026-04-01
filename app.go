@@ -7,44 +7,46 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
-
-	"yt-music-dl/internal/deps"
 	"yt-music-dl/internal/deezer"
+	"yt-music-dl/internal/deps"
 	"yt-music-dl/internal/downloader"
 	"yt-music-dl/internal/metadata"
 	"yt-music-dl/internal/settings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
 	ctx context.Context
 }
 
-func NewApp() *App {
-	return &App{}
-}
+func NewApp() *App { return &App{} }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-}
+func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
-func (a *App) CheckDeps() (deps.DepStatus, error) {
-	return deps.Check()
-}
+func (a *App) CheckDeps() (deps.DepStatus, error) { return deps.Check() }
 
-func (a *App) InstallDeps() error {
-	return deps.Install(func(msg string) {
+func (a *App) InstallYtDlp() error {
+	return deps.InstallYtDlp(func(msg string) {
 		runtime.EventsEmit(a.ctx, "deps:log", msg)
 	})
 }
 
-func (a *App) GetSettings() (settings.Settings, error) {
-	return settings.Load()
+func (a *App) InstallFfmpeg() error {
+	return deps.InstallFfmpeg(func(msg string) {
+		runtime.EventsEmit(a.ctx, "deps:log", msg)
+	})
 }
 
-func (a *App) SaveSettings(s settings.Settings) error {
-	return settings.Save(s)
+func (a *App) InstallDeno() error {
+	return deps.InstallDeno(func(msg string) {
+		runtime.EventsEmit(a.ctx, "deps:log", msg)
+	})
 }
+
+func (a *App) GetSettings() (settings.Settings, error) { return settings.Load() }
+
+func (a *App) SaveSettings(s settings.Settings) error { return settings.Save(s) }
 
 func (a *App) SaveCookieFile(content string) error {
 	exe, err := os.Executable()
@@ -63,9 +65,7 @@ func (a *App) SaveCookieFile(content string) error {
 	return settings.Save(s)
 }
 
-func (a *App) SearchDeezer(query string) ([]deezer.Track, error) {
-	return deezer.Search(query)
-}
+func (a *App) SearchDeezer(query string) ([]deezer.Track, error) { return deezer.Search(query) }
 
 type DownloadReady struct {
 	Path  string `json:"path"`
@@ -85,12 +85,18 @@ func (a *App) StartDownload(url string) error {
 		return fmt.Errorf("create output dir: %w", err)
 	}
 
+	depStatus, err := deps.Check()
+	if err != nil {
+		return err
+	}
+
 	go func() {
 		mp3Path, err := downloader.Run(downloader.Options{
 			URL:        url,
 			OutputDir:  s.OutputDir,
 			CookiePath: s.CookiePath,
 			BinDir:     binDir,
+			UseDeno:    depStatus.Deno,
 		}, func(line string) {
 			runtime.EventsEmit(a.ctx, "download:log", line)
 		})
@@ -99,10 +105,7 @@ func (a *App) StartDownload(url string) error {
 			return
 		}
 		title := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
-		runtime.EventsEmit(a.ctx, "download:ready", DownloadReady{
-			Path:  mp3Path,
-			Title: title,
-		})
+		runtime.EventsEmit(a.ctx, "download:ready", DownloadReady{Path: mp3Path, Title: title})
 	}()
 
 	return nil

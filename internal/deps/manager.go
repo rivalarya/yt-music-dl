@@ -7,13 +7,21 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 type DepStatus struct {
-	YtDlp  bool `json:"ytDlp"`
-	Ffmpeg bool `json:"ffmpeg"`
-	Deno   bool `json:"deno"`
+	YtDlp         bool   `json:"ytDlp"`
+	YtDlpVersion  string `json:"ytDlpVersion"`
+	Ffmpeg        bool   `json:"ffmpeg"`
+	FfmpegSystem  bool   `json:"ffmpegSystem"`
+	FfmpegVersion string `json:"ffmpegVersion"`
+	Deno          bool   `json:"deno"`
+	DenoSystem    bool   `json:"denoSystem"`
+	DenoVersion   string `json:"denoVersion"`
 }
 
 const (
@@ -22,7 +30,6 @@ const (
 	denoURL   = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"
 )
 
-// BinDir returns the bin/ folder next to the executable.
 func BinDir() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -35,71 +42,139 @@ func BinDir() (string, error) {
 	return dir, nil
 }
 
+func isOnPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func runOutput(bin string, args ...string) string {
+	cmd := exec.Command(bin, args...)
+
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+	}
+
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(out))
+}
+
+// ytDlpVersion: first line of "yt-dlp --version" → "2026.03.17"
+func parseYtDlpVersion(bin string) string {
+	out := runOutput(bin, "--version")
+	return strings.SplitN(out, "\n", 2)[0]
+}
+
+// ffmpegVersion: first line is "ffmpeg version N-118487-gb92... ..."
+// For nightly builds, trim to the commit short hash prefix. For release builds, keep the semver.
+// Either way, just take the third field (index 2).
+func parseFfmpegVersion(bin string, args ...string) string {
+	out := runOutput(bin, args...)
+	// first line: "ffmpeg version <token> ..."
+	line := strings.SplitN(out, "\n", 2)[0]
+	parts := strings.Fields(line)
+	// parts: ["ffmpeg", "version", "<ver>", ...]
+	if len(parts) >= 3 {
+		v := parts[2]
+		// nightly: "N-118487-gb92577405b-20250217" → trim after second dash to "N-118487"
+		if strings.HasPrefix(v, "N-") {
+			segments := strings.SplitN(v, "-", 3)
+			if len(segments) >= 2 {
+				return segments[0] + "-" + segments[1]
+			}
+		}
+		return v
+	}
+	return line
+}
+
+// denoVersion: "deno 2.7.10 (stable, release, x86_64-pc-windows-msvc)" → "2.7.10"
+func parseDenoVersion(bin string) string {
+	out := runOutput(bin, "--version")
+	line := strings.SplitN(out, "\n", 2)[0]
+	// line: "deno <version> (...)"
+	parts := strings.Fields(line)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return line
+}
+
 func Check() (DepStatus, error) {
 	bin, err := BinDir()
 	if err != nil {
 		return DepStatus{}, err
 	}
-	return DepStatus{
-		YtDlp:  fileExists(filepath.Join(bin, "yt-dlp.exe")),
-		Ffmpeg: fileExists(filepath.Join(bin, "ffmpeg.exe")),
-		Deno:   fileExists(filepath.Join(bin, "deno.exe")),
-	}, nil
+
+	ffmpegSystem := isOnPath("ffmpeg")
+	denoSystem := isOnPath("deno")
+
+	ytDlpPath := filepath.Join(bin, "yt-dlp.exe")
+	ffmpegBinPath := filepath.Join(bin, "ffmpeg.exe")
+	denoBinPath := filepath.Join(bin, "deno.exe")
+
+	status := DepStatus{
+		FfmpegSystem: ffmpegSystem,
+		DenoSystem:   denoSystem,
+	}
+
+	if fileExists(ytDlpPath) {
+		status.YtDlp = true
+		status.YtDlpVersion = parseYtDlpVersion(ytDlpPath)
+	}
+
+	if ffmpegSystem {
+		status.Ffmpeg = true
+		status.FfmpegVersion = parseFfmpegVersion("ffmpeg", "-version")
+	} else if fileExists(ffmpegBinPath) {
+		status.Ffmpeg = true
+		status.FfmpegVersion = parseFfmpegVersion(ffmpegBinPath, "-version")
+	}
+
+	if denoSystem {
+		status.Deno = true
+		status.DenoVersion = parseDenoVersion("deno")
+	} else if fileExists(denoBinPath) {
+		status.Deno = true
+		status.DenoVersion = parseDenoVersion(denoBinPath)
+	}
+
+	return status, nil
 }
 
-// Install downloads all missing deps. onProgress receives a status string for the log.
-func Install(onProgress func(string)) error {
+func InstallYtDlp(onProgress func(string)) error {
+	return installDep("yt-dlp", ytDlpURL, writeSingle("yt-dlp.exe"), onProgress)
+}
+
+func InstallFfmpeg(onProgress func(string)) error {
+	return installDep("ffmpeg", ffmpegURL, func(data []byte, destDir string) error {
+		return extractNamedFromZip(data, destDir, "ffmpeg.exe")
+	}, onProgress)
+}
+
+func InstallDeno(onProgress func(string)) error {
+	return installDep("deno", denoURL, extractFirstExeFromZip, onProgress)
+}
+
+func installDep(name, url string, extract func([]byte, string) error, onProgress func(string)) error {
 	bin, err := BinDir()
 	if err != nil {
 		return err
 	}
-
-	type dep struct {
-		name    string
-		path    string
-		url     string
-		extract func(data []byte, destDir string) error
+	onProgress(fmt.Sprintf("[download] %s ...", name))
+	data, err := download(url)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", name, err)
 	}
-
-	deps := []dep{
-		{
-			name:    "yt-dlp",
-			path:    filepath.Join(bin, "yt-dlp.exe"),
-			url:     ytDlpURL,
-			extract: writeSingle,
-		},
-		{
-			name:    "deno",
-			path:    filepath.Join(bin, "deno.exe"),
-			url:     denoURL,
-			extract: extractFirstExeFromZip,
-		},
-		{
-			name: "ffmpeg",
-			path: filepath.Join(bin, "ffmpeg.exe"),
-			url:  ffmpegURL,
-			extract: func(data []byte, destDir string) error {
-				return extractNamedFromZip(data, destDir, "ffmpeg.exe")
-			},
-		},
+	onProgress(fmt.Sprintf("[extract] %s ...", name))
+	if err := extract(data, bin); err != nil {
+		return fmt.Errorf("extract %s: %w", name, err)
 	}
-
-	for _, d := range deps {
-		if fileExists(d.path) {
-			onProgress(fmt.Sprintf("[skip] %s already exists", d.name))
-			continue
-		}
-		onProgress(fmt.Sprintf("[download] %s ...", d.name))
-		data, err := download(d.url)
-		if err != nil {
-			return fmt.Errorf("download %s: %w", d.name, err)
-		}
-		onProgress(fmt.Sprintf("[extract] %s ...", d.name))
-		if err := d.extract(data, bin); err != nil {
-			return fmt.Errorf("extract %s: %w", d.name, err)
-		}
-		onProgress(fmt.Sprintf("[done] %s", d.name))
-	}
+	onProgress(fmt.Sprintf("[done] %s", name))
 	return nil
 }
 
@@ -115,10 +190,10 @@ func download(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func writeSingle(data []byte, destDir string) error {
-	// For yt-dlp — the download IS the exe
-	// filename is derived from the URL's last segment; hardcode yt-dlp.exe
-	return os.WriteFile(filepath.Join(destDir, "yt-dlp.exe"), data, 0755)
+func writeSingle(filename string) func([]byte, string) error {
+	return func(data []byte, destDir string) error {
+		return os.WriteFile(filepath.Join(destDir, filename), data, 0755)
+	}
 }
 
 func extractFirstExeFromZip(data []byte, destDir string) error {
