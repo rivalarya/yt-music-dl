@@ -1,0 +1,14 @@
+# Wails Build
+build/
+*.dll
+*.dylib
+*.so
+
+# Wails Generated Files
+frontend/wailsjs/
+
+# Go
+*.test
+*.out
+go.work
+go.work.sum
