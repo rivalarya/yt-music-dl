@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 )
 
 type Options struct {
@@ -24,7 +25,6 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	}
 
 	ytDlp := filepath.Join(opts.BinDir, "yt-dlp.exe")
-	// deno := filepath.Join(opts.BinDir, "deno.exe")
 
 	args := []string{
 		opts.URL,
@@ -46,6 +46,10 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	}
 
 	cmd := exec.Command(ytDlp, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+    HideWindow:    true,
+    CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
