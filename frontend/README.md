@@ -1,1 +1,0 @@
-Nextjs starter with shadcn ui
