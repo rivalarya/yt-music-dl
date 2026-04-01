@@ -33,6 +33,10 @@ func Run(opts Options, onLog func(string)) (string, error) {
 		"--audio-format", "mp3",
 		"--audio-quality", "0",
 		"--output", filepath.Join(opts.OutputDir, "%(title)s.%(ext)s"),
+
+		"--embed-thumbnail",           // embed cover
+		"--convert-thumbnails", "jpg", // ensure compatible format
+
 		"--js-runtime", "deno",
 		"--remote-components", "ejs:github",
 		"--no-playlist",
