@@ -9,6 +9,12 @@
   "author": {
     "name": "rivalarya"
   },
+  "info": {
+    "productName": "YT Music Downloader",
+    "productVersion": "1.0.0",
+    "companyName": "rivalarya",
+    "copyright": "© 2026 rivalarya"
+  },
   "windows": {
     "icon": "build/appicon.ico"
   },
