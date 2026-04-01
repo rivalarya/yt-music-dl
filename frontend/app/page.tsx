@@ -137,7 +137,7 @@ export default function Home() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
         <span className="font-semibold text-sm tracking-tight">YT Music Downloader</span>
-        <a href="/settings" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+        <a href="/settings/" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
           Settings
         </a>
       </div>

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-html-link-for-pages */
 "use client";
 
 import { useState, useEffect } from "react";
@@ -11,7 +12,6 @@ import { CookieModal } from "@/components/CookieModal";
 import { useWailsEvent } from "@/lib/useWailsEvent";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useCallback } from "react";
-import Link from "next/link";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings>({
@@ -69,9 +69,7 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
         <span className="font-semibold text-sm tracking-tight">Settings</span>
-        <Link href="/">
-            ← Back
-        </Link>
+        <a href="/">← Back</a>
       </div>
 
       <div className="flex-1 flex flex-col gap-6 p-6 max-w-lg mx-auto w-full">
