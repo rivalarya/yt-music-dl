@@ -8,5 +8,11 @@
   "frontend:dev:serverUrl": "http://localhost:3000",
   "author": {
     "name": "rivalarya"
+  },
+  "windows": {
+    "icon": "build/appicon.ico"
+  },
+  "mac": {
+    "icon": "build/appicon.png"
   }
 }

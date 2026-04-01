@@ -1,8 +1,9 @@
 # Wails Build
-build/
+build/*
 *.dll
 *.dylib
 *.so
+!build/appicon.png
 
 # Wails Generated Files
 frontend/wailsjs/
