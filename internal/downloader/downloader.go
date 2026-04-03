@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"yt-music-dl/internal/logger"
 )
 
 type Options struct {
@@ -35,14 +36,14 @@ func Run(opts Options, onLog func(string)) (string, error) {
 		"--convert-thumbnails", "jpg",
 		"--no-playlist",
 	}
-
 	if opts.UseDeno {
 		args = append(args, "--js-runtime", "deno", "--remote-components", "ejs:github")
 	}
-
 	if opts.CookiePath != "" {
 		args = append(args, "--cookies", opts.CookiePath)
 	}
+
+	logger.Log.WithField("args", args).Debug("running yt-dlp")
 
 	cmd := exec.Command(ytDlp, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -58,7 +59,6 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start yt-dlp: %w", err)
 	}
@@ -67,7 +67,9 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	stream := func(r interface{ Read([]byte) (int, error) }) {
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
-			onLog(scanner.Text())
+			line := scanner.Text()
+			logger.Log.Info("[yt-dlp] " + line)
+			onLog(line)
 		}
 		done <- struct{}{}
 	}
@@ -77,6 +79,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	<-done
 
 	if err := cmd.Wait(); err != nil {
+		logger.Log.WithError(err).Error("yt-dlp exited with error")
 		return "", fmt.Errorf("yt-dlp exited: %w", err)
 	}
 
@@ -84,13 +87,13 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read dir after download: %w", err)
 	}
-
 	for name := range after {
 		if _, existed := before[name]; !existed {
-			return filepath.Join(opts.OutputDir, name), nil
+			path := filepath.Join(opts.OutputDir, name)
+			logger.Log.WithField("path", path).Info("new mp3 detected")
+			return path, nil
 		}
 	}
-
 	return "", fmt.Errorf("download finished but no new mp3 found in %s", opts.OutputDir)
 }
 

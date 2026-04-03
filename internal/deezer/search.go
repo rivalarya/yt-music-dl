@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"yt-music-dl/internal/logger"
 )
 
 type Track struct {
@@ -17,14 +18,14 @@ type Track struct {
 }
 
 type deezerTrack struct {
-	ID    int    `json:"id"`
-	Title string `json:"title"`
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
 	Artist struct {
 		Name string `json:"name"`
 	} `json:"artist"`
 	Album struct {
-		Title  string `json:"title"`
-		Cover  string `json:"cover_medium"`
+		Title string `json:"title"`
+		Cover string `json:"cover_medium"`
 	} `json:"album"`
 	Duration int `json:"duration"`
 }
@@ -35,6 +36,7 @@ type deezerResponse struct {
 
 func Search(query string) ([]Track, error) {
 	endpoint := fmt.Sprintf("https://api.deezer.com/search?q=%s", url.QueryEscape(query))
+	logger.Log.WithField("endpoint", endpoint).Debug("deezer request")
 
 	resp, err := http.Get(endpoint)
 	if err != nil {
@@ -46,6 +48,8 @@ func Search(query string) ([]Track, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+
+	logger.Log.WithField("count", len(result.Data)).Debug("deezer results")
 
 	tracks := make([]Track, 0, len(result.Data))
 	for _, t := range result.Data {

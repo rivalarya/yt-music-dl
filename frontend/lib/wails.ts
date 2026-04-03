@@ -11,6 +11,8 @@ import {
   TagFile,
   SelectOutputDir,
   OpenFolder,
+  GetLogDir,
+  LogFrontend,
 } from "../wailsjs/go/main/App";
 
 export {
@@ -26,6 +28,8 @@ export {
   TagFile,
   SelectOutputDir,
   OpenFolder,
+  GetLogDir,
+  LogFrontend,
 };
 
 export type DepsStatus = {

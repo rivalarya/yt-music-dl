@@ -2,6 +2,9 @@ package main
 
 import (
 	"embed"
+	"os"
+	"path/filepath"
+	"yt-music-dl/internal/logger"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -12,9 +15,14 @@ import (
 var assets embed.FS
 
 func main() {
-	app := NewApp()
+	exe, err := os.Executable()
+	if err == nil {
+		logger.Init(filepath.Dir(exe))
+	}
+	logger.Log.Info("app starting")
 
-	err := wails.Run(&options.App{
+	app := NewApp()
+	err = wails.Run(&options.App{
 		Title:  "YT Music Downloader",
 		Width:  900,
 		Height: 680,
@@ -28,6 +36,6 @@ func main() {
 		},
 	})
 	if err != nil {
-		println("Error:", err.Error())
+		logger.Log.WithError(err).Fatal("wails run failed")
 	}
 }
