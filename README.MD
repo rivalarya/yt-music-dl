@@ -8,8 +8,8 @@ Built with [Wails](https://wails.io/) (Go + Next.js).
 
 ## Installation
 
-1. Download the latest release [here](https://github.com/rivalarya/yt-music-dl/releases/download/1.0.0/yt-music-dl-windows.zip).
-2. Extract and run `yt-music-dl.exe`.
+1. Download the latest release [here](https://github.com/rivalarya/yt-music-dl/releases/latest/download/yt-music-dl-amd64-installer.exe).
+2. Run the installer and open the App.
 3. Open **Settings** and install the required dependencies:
    - **yt-dlp** — downloads audio from YouTube Music
    - **ffmpeg** — converts audio to MP3
