@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { StartDownload, TagFile, SearchDeezer, LogFrontend } from "@/lib/wails";
+import { StartDownload, TagFile, SearchDeezer, LogFrontend, CheckDeps } from "@/lib/wails";
 import { useWailsEvent } from "@/lib/useWailsEvent";
 import type { Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings, Bug } from "lucide-react";
+import { Info, Settings, Bug, AlertTriangle } from "lucide-react";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AboutModal } from "@/components/AboutModal";
 import { BugReportModal } from "@/components/BugReportModal";
@@ -24,12 +24,37 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [bugOpen, setBugOpen] = useState(false);
+  const [missingDeps, setMissingDeps] = useState<string[]>([]);
 
   const downloadedPathRef = useRef<string>("");
 
   const logToBackend = useCallback((level: string, msg: string) => {
     LogFrontend(level, msg).catch(() => { });
   }, []);
+
+  useEffect(() => {
+    CheckDeps()
+      .then((status) => {
+        const missing: string[] = [];
+        if (!status.ytDlp) missing.push("yt-dlp");
+        if (!status.ffmpeg) missing.push("ffmpeg");
+        setMissingDeps(missing);
+      })
+      .catch(() => { });
+  }, []);
+
+  // Re-check deps when settings modal closes (user may have just installed something)
+  function handleSettingsClose() {
+    setSettingsOpen(false);
+    CheckDeps()
+      .then((status) => {
+        const missing: string[] = [];
+        if (!status.ytDlp) missing.push("yt-dlp");
+        if (!status.ffmpeg) missing.push("ffmpeg");
+        setMissingDeps(missing);
+      })
+      .catch(() => { });
+  }
 
   const onReady = useCallback(
     async (payload: unknown) => {
@@ -39,7 +64,8 @@ export default function Home() {
 
       let tracks: Track[] = [];
       try {
-        const filename = filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
+        const filename =
+          filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
         tracks = await SearchDeezer(filename);
       } catch (e) {
         logToBackend("warn", `deezer search failed: ${e}`);
@@ -92,7 +118,6 @@ export default function Home() {
     downloadedPathRef.current = "";
     setDonePath("");
     setNoMetadata(false);
-
     try {
       await StartDownload(url);
     } catch (e) {
@@ -110,7 +135,8 @@ export default function Home() {
     setNoMetadata(false);
   }
 
-  const busy = phase === "downloading" || phase === "tagging" || phase === "searching";
+  const busy =
+    phase === "downloading" || phase === "tagging" || phase === "searching";
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -140,6 +166,23 @@ export default function Home() {
           </button>
         </div>
       </div>
+
+      {missingDeps.length > 0 && (
+        <div className="flex items-center gap-3 px-6 py-3 bg-destructive/10 border-b border-destructive/30 text-destructive">
+          <AlertTriangle size={16} className="flex-shrink-0" />
+          <span className="text-xs flex-1">
+            Required dependencies missing:{" "}
+            <span className="font-semibold">{missingDeps.join(", ")}</span>.
+            Downloads will not work until they are installed.
+          </span>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-xs underline underline-offset-2 hover:opacity-80 transition-opacity flex-shrink-0"
+          >
+            Install in Settings
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col gap-6 p-6 max-w-2xl mx-auto w-full">
         <div className="flex flex-col gap-2">
@@ -202,7 +245,9 @@ export default function Home() {
                 No metadata found on Deezer. Downloaded without metadata.
               </p>
             )}
-            <p className="text-xs text-muted-foreground break-all">Saved to: {donePath}</p>
+            <p className="text-xs text-muted-foreground break-all">
+              Saved to: {donePath}
+            </p>
             <Button variant="outline" onClick={reset}>
               Download another
             </Button>
@@ -211,7 +256,9 @@ export default function Home() {
 
         {phase === "error" && (
           <div className="flex flex-col gap-2">
-            <p className="text-xs text-destructive">Something went wrong. Check the log file for details.</p>
+            <p className="text-xs text-destructive">
+              Something went wrong. Check the log file for details.
+            </p>
             <div className="flex gap-2">
               <Button variant="outline" onClick={reset}>
                 Try again
@@ -224,7 +271,7 @@ export default function Home() {
         )}
       </div>
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={handleSettingsClose} />
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <BugReportModal open={bugOpen} onClose={() => setBugOpen(false)} />
     </div>
