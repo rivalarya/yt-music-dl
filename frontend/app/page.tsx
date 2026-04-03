@@ -11,6 +11,7 @@ import type { Settings as WailsSettings, Track } from "@/lib/wails";
 import Image from "next/image";
 import { Info, Settings } from "lucide-react";
 import { SettingsModal } from "@/components/SettingsModal";
+import { AboutModal } from "@/components/AboutModal";
 
 // Flow: idle → downloading → picking → tagging → done
 type Phase = "idle" | "downloading" | "picking" | "tagging" | "done" | "error";
@@ -32,10 +33,11 @@ export default function Home() {
   const [donePath, setDonePath] = useState("");
   const [settings, setSettings] = useState<WailsSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    GetSettings().then(setSettings).catch(() => {});
+    GetSettings().then(setSettings).catch(() => { });
   }, []);
 
   const appendLog = useCallback((line: unknown) => {
@@ -148,14 +150,14 @@ export default function Home() {
           >
             <Settings size={24} />
           </button>
-          <a
-            href="/about/"
+          <button
+            onClick={() => setAboutOpen(true)}
             className="text-muted-foreground hover:text-foreground transition-colors"
             aria-label="About"
             title="About"
           >
             <Info size={24} />
-          </a>
+          </button>
         </div>
       </div>
 
@@ -282,6 +284,7 @@ export default function Home() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }
