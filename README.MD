@@ -1,6 +1,6 @@
 # yt-music-dl
 
-Download YouTube Music tracks as MP3 with Deezer metadata (title, artist, album) embedded automatically.
+Download YouTube Music tracks as MP3 with metadata (title, artist, album) from Deezer embedded automatically.
 
 Built with [Wails](https://wails.io/) (Go + Next.js).
 
@@ -11,35 +11,55 @@ Built with [Wails](https://wails.io/) (Go + Next.js).
 1. Download the latest release [here](https://github.com/rivalarya/yt-music-dl/releases/download/1.0.0/yt-music-dl-windows.zip).
 2. Extract and run `yt-music-dl.exe`.
 3. Open **Settings** and install the required dependencies:
-   - **yt-dlp** — required, downloads audio from YouTube Music
-   - **ffmpeg** — required, converts audio to MP3
+   - **yt-dlp** — downloads audio from YouTube Music
+   - **ffmpeg** — converts audio to MP3
 
-> **Note:** The app checks for `ffmpeg` and `deno` on your system `PATH` first. If found, it uses those and skips the install button. You only need to install them via Settings if they are missing from your system.
+> The app checks for `ffmpeg` and `deno` on your system `PATH` first. If found, they are used as-is and the install button is hidden.
+
+The app will show a warning banner on startup if required dependencies are missing.
 
 ### Optional: Deno
 
-Deno is optional. yt-dlp uses a built-in JavaScript runtime by default. If YouTube updates break that runtime, installing Deno provides a more stable alternative. Install it from Settings if you run into extraction errors.
+yt-dlp ships with a built-in JavaScript runtime. When YouTube updates break it, Deno provides a more reliable fallback. Install it from Settings if you hit extraction errors.
 
 ### Optional: YouTube Cookie
 
-If downloads fail (bot detection or age-restricted content), provide your browser cookies:
+If downloads fail due to bot detection or age-restricted content:
 
 1. Install the Chrome extension **"Get cookies.txt LOCALLY"**.
 2. Go to [youtube.com](https://www.youtube.com) while logged in.
 3. Click the extension → Export cookies.
-4. In Settings → YouTube Cookie → paste the file contents.
+4. In **Settings → YouTube Cookie**, paste the file contents.
 
 ---
 
 ## Usage
 
 1. Copy a YouTube Music track URL.
-2. Paste it into the URL field.
-3. Optionally enter a Deezer search query to help match the correct metadata (defaults to the video title).
-4. Click **Download**.
-5. Select the correct track from Deezer results, or enable **Auto-select first result** in Settings to skip this step.
+2. Paste it into the URL field and click **Download**.
+3. yt-dlp downloads the audio and converts it to MP3.
+4. The app searches Deezer using the video title and automatically embeds the first matching track's metadata (title, artist, album, cover art).
+5. The MP3 is saved to your configured output directory (`~/Music` by default).
 
-The MP3 is saved to your configured output directory (`~/Music` by default) with title, artist, album, and cover art embedded.
+If no Deezer match is found, the file is saved without metadata.
+
+---
+
+## Settings
+
+| Setting | Description |
+|---|---|
+| Output directory | Where MP3 files are saved. Defaults to `~/Music`. |
+| yt-dlp | Download/update the bundled yt-dlp binary. |
+| ffmpeg | Download/update the bundled ffmpeg binary. |
+| Deno | Optional. Install if yt-dlp's built-in JS runtime breaks. |
+| YouTube Cookie | Paste `cookies.txt` content to bypass bot detection. |
+
+---
+
+## Bug Reporting
+
+Click the **bug icon** in the top bar. The dialog walks you through opening the log folder (`logs/app.log`) and filing a GitHub issue with the relevant log lines.
 
 ---
 
@@ -62,7 +82,7 @@ Build a release binary:
 wails build
 ```
 
-The project structure:
+Project structure:
 
 ```
 app.go                    # Wails app bindings
@@ -71,6 +91,7 @@ internal/
   deezer/                 # Deezer search API
   deps/                   # Dependency install/check (yt-dlp, ffmpeg, deno)
   downloader/             # yt-dlp subprocess wrapper
+  logger/                 # Logrus + log rotation
   metadata/               # ID3 tag writer
   settings/               # Settings persistence
 frontend/
