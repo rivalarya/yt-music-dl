@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-
 	"yt-music-dl/internal/deezer"
 	"yt-music-dl/internal/deps"
 	"yt-music-dl/internal/downloader"
@@ -27,26 +27,17 @@ func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 func (a *App) CheckDeps() (deps.DepStatus, error) { return deps.Check() }
 
 func (a *App) InstallYtDlp() error {
-	return deps.InstallYtDlp(func(msg string) {
-		runtime.EventsEmit(a.ctx, "deps:log", msg)
-	})
+	return deps.InstallYtDlp(func(msg string) { runtime.EventsEmit(a.ctx, "deps:log", msg) })
 }
-
 func (a *App) InstallFfmpeg() error {
-	return deps.InstallFfmpeg(func(msg string) {
-		runtime.EventsEmit(a.ctx, "deps:log", msg)
-	})
+	return deps.InstallFfmpeg(func(msg string) { runtime.EventsEmit(a.ctx, "deps:log", msg) })
 }
-
 func (a *App) InstallDeno() error {
-	return deps.InstallDeno(func(msg string) {
-		runtime.EventsEmit(a.ctx, "deps:log", msg)
-	})
+	return deps.InstallDeno(func(msg string) { runtime.EventsEmit(a.ctx, "deps:log", msg) })
 }
 
 func (a *App) GetSettings() (settings.Settings, error) { return settings.Load() }
-
-func (a *App) SaveSettings(s settings.Settings) error { return settings.Save(s) }
+func (a *App) SaveSettings(s settings.Settings) error  { return settings.Save(s) }
 
 func (a *App) SaveCookieFile(content string) error {
 	exe, err := os.Executable()
@@ -63,6 +54,17 @@ func (a *App) SaveCookieFile(content string) error {
 	}
 	s.CookiePath = cookiePath
 	return settings.Save(s)
+}
+
+func (a *App) OpenFolder(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return err
+	}
+	cmd := exec.Command("explorer", path)
+	return cmd.Start()
 }
 
 func (a *App) SearchDeezer(query string) ([]deezer.Track, error) { return deezer.Search(query) }
@@ -84,12 +86,10 @@ func (a *App) StartDownload(url string) error {
 	if err := os.MkdirAll(s.OutputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
-
 	depStatus, err := deps.Check()
 	if err != nil {
 		return err
 	}
-
 	go func() {
 		mp3Path, err := downloader.Run(downloader.Options{
 			URL:        url,
@@ -107,7 +107,6 @@ func (a *App) StartDownload(url string) error {
 		title := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
 		runtime.EventsEmit(a.ctx, "download:ready", DownloadReady{Path: mp3Path, Title: title})
 	}()
-
 	return nil
 }
 

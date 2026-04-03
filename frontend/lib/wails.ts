@@ -10,6 +10,7 @@ import {
   StartDownload,
   TagFile,
   SelectOutputDir,
+  OpenFolder,
 } from "../wailsjs/go/main/App";
 
 export {
@@ -24,6 +25,7 @@ export {
   StartDownload,
   TagFile,
   SelectOutputDir,
+  OpenFolder,
 };
 
 export type DepsStatus = {

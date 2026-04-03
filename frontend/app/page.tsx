@@ -7,15 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StartDownload, TagFile, SearchDeezer, GetSettings } from "@/lib/wails";
 import { useWailsEvent } from "@/lib/useWailsEvent";
-import type { Settings, Track } from "@/lib/wails";
+import type { Settings as WailsSettings, Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings2Icon } from "lucide-react";
+import { Info, Settings } from "lucide-react";
+import { SettingsModal } from "@/components/SettingsModal";
 
-// Flow:
-// idle → downloading (yt-dlp runs, log streams)
-// → picking (yt-dlp done, user picks Deezer metadata)
-// → tagging (TagFile runs)
-// → done
+// Flow: idle → downloading → picking → tagging → done
 type Phase = "idle" | "downloading" | "picking" | "tagging" | "done" | "error";
 
 function formatDuration(s: number) {
@@ -33,7 +30,8 @@ export default function Home() {
   const [selected, setSelected] = useState<Track | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [donePath, setDonePath] = useState("");
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settings, setSettings] = useState<WailsSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,31 +42,37 @@ export default function Home() {
     setLogs((prev) => [...prev, String(line)]);
   }, []);
 
-  const onReady = useCallback(async (payload: unknown) => {
-    const { path: filePath, title: ytTitle } = payload as { path: string; title: string };
-    setMp3Path(filePath);
-    appendLog("[done] download complete");
-    const q = query.trim() || ytTitle;
-    appendLog(`[deezer] searching "${q}" ...`);
-    try {
-      const tracks = await SearchDeezer(q);
-      setResults(tracks);
-      if (settings?.autoSelectFirst && tracks.length > 0) {
-        await applyTag(filePath, tracks[0]);
-      } else {
-        setPhase("picking");
+  const onReady = useCallback(
+    async (payload: unknown) => {
+      const { path: filePath, title: ytTitle } = payload as { path: string; title: string };
+      setMp3Path(filePath);
+      appendLog("[done] download complete");
+      const q = query.trim() || ytTitle;
+      appendLog(`[deezer] searching "${q}" ...`);
+      try {
+        const tracks = await SearchDeezer(q);
+        setResults(tracks);
+        if (settings?.autoSelectFirst && tracks.length > 0) {
+          await applyTag(filePath, tracks[0]);
+        } else {
+          setPhase("picking");
+        }
+      } catch (e) {
+        appendLog(`[error] deezer search failed: ${e}`);
+        setPhase("error");
       }
-    } catch (e) {
-      appendLog(`[error] deezer search failed: ${e}`);
-      setPhase("error");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, url, settings]);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [query, url, settings]
+  );
 
-  const onError = useCallback((msg: unknown) => {
-    appendLog(`[error] ${msg}`);
-    setPhase("error");
-  }, [appendLog]);
+  const onError = useCallback(
+    (msg: unknown) => {
+      appendLog(`[error] ${msg}`);
+      setPhase("error");
+    },
+    [appendLog]
+  );
 
   const onDone = useCallback((path: unknown) => {
     setDonePath(String(path));
@@ -134,13 +138,23 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <span className="font-semibold text-sm tracking-tight">YT Music Downloader</span>
+        <span className="font-semibold text tracking-tight">YT Music Downloader</span>
         <div className="flex items-center gap-4">
-          <a href="/settings/" className="text-xs text-muted-foreground hover:text-foreground transition-colors" aria-label="Settings" title="Settings">
-            <Settings2Icon size={15} />
-          </a>
-          <a href="/about/" className="text-muted-foreground hover:text-foreground transition-colors" aria-label="About" title="About">
-            <Info size={15} />
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Settings"
+            title="Settings"
+          >
+            <Settings size={24} />
+          </button>
+          <a
+            href="/about/"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="About"
+            title="About"
+          >
+            <Info size={24} />
           </a>
         </div>
       </div>
@@ -266,6 +280,8 @@ export default function Home() {
           </Button>
         )}
       </div>
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
