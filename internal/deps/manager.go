@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"yt-music-dl/internal/logger"
 )
 
 type DepStatus struct {
@@ -125,22 +126,25 @@ func Check() (DepStatus, error) {
 	if fileExists(ytDlpPath) {
 		status.YtDlp = true
 		status.YtDlpVersion = parseYtDlpVersion(ytDlpPath)
+		logger.Log.WithField("version", status.YtDlpVersion).Debug("yt-dlp found")
 	}
-
 	if ffmpegSystem {
 		status.Ffmpeg = true
 		status.FfmpegVersion = parseFfmpegVersion("ffmpeg", "-version")
+		logger.Log.WithField("version", status.FfmpegVersion).Debug("ffmpeg found (system)")
 	} else if fileExists(ffmpegBinPath) {
 		status.Ffmpeg = true
 		status.FfmpegVersion = parseFfmpegVersion(ffmpegBinPath, "-version")
+		logger.Log.WithField("version", status.FfmpegVersion).Debug("ffmpeg found (bin)")
 	}
-
 	if denoSystem {
 		status.Deno = true
 		status.DenoVersion = parseDenoVersion("deno")
+		logger.Log.WithField("version", status.DenoVersion).Debug("deno found (system)")
 	} else if fileExists(denoBinPath) {
 		status.Deno = true
 		status.DenoVersion = parseDenoVersion(denoBinPath)
+		logger.Log.WithField("version", status.DenoVersion).Debug("deno found (bin)")
 	}
 
 	return status, nil
@@ -165,20 +169,23 @@ func installDep(name, url string, extract func([]byte, string) error, onProgress
 	if err != nil {
 		return err
 	}
-	onProgress(fmt.Sprintf("[download] %s ...", name))
-	data, err := download(url)
+	logger.Log.WithFields(map[string]interface{}{"dep": name, "url": url}).Info("downloading dep")
+	data, err := downloadWithProgress(url, onProgress)
 	if err != nil {
+		logger.Log.WithError(err).Errorf("download %s failed", name)
 		return fmt.Errorf("download %s: %w", name, err)
 	}
-	onProgress(fmt.Sprintf("[extract] %s ...", name))
+	onProgress("[extract] installing...")
 	if err := extract(data, bin); err != nil {
+		logger.Log.WithError(err).Errorf("extract %s failed", name)
 		return fmt.Errorf("extract %s: %w", name, err)
 	}
-	onProgress(fmt.Sprintf("[done] %s", name))
+	logger.Log.WithField("dep", name).Info("dep installed")
+	onProgress("[done]")
 	return nil
 }
 
-func download(url string) ([]byte, error) {
+func downloadWithProgress(url string, onProgress func(string)) ([]byte, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -187,7 +194,34 @@ func download(url string) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+
+	total := resp.ContentLength // -1 if unknown
+	buf := &bytes.Buffer{}
+	chunk := make([]byte, 32*1024) // 32 KB chunks
+	var downloaded int64
+	lastPct := -1
+
+	for {
+		n, err := resp.Body.Read(chunk)
+		if n > 0 {
+			buf.Write(chunk[:n])
+			downloaded += int64(n)
+			if total > 0 {
+				pct := int(downloaded * 100 / total)
+				if pct != lastPct {
+					lastPct = pct
+					onProgress(fmt.Sprintf("[progress] %d", pct))
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return buf.Bytes(), nil
 }
 
 func writeSingle(filename string) func([]byte, string) error {

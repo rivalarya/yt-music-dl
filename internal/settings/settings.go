@@ -7,9 +7,8 @@ import (
 )
 
 type Settings struct {
-	AutoSelectFirst bool   `json:"autoSelectFirst"`
-	OutputDir       string `json:"outputDir"`
-	CookiePath      string `json:"cookiePath"`
+	OutputDir  string `json:"outputDir"`
+	CookiePath string `json:"cookiePath"`
 }
 
 func configPath() (string, error) {
@@ -25,13 +24,10 @@ func Load() (Settings, error) {
 	if err != nil {
 		return defaultSettings(), err
 	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// First run — return defaults
 		return defaultSettings(), nil
 	}
-
 	var s Settings
 	if err := json.Unmarshal(data, &s); err != nil {
 		return defaultSettings(), err
@@ -44,7 +40,6 @@ func Save(s Settings) error {
 	if err != nil {
 		return err
 	}
-
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -55,8 +50,7 @@ func Save(s Settings) error {
 func defaultSettings() Settings {
 	home, _ := os.UserHomeDir()
 	return Settings{
-		AutoSelectFirst: false,
-		OutputDir:       filepath.Join(home, "Music"),
-		CookiePath:      "",
+		OutputDir:  filepath.Join(home, "Music"),
+		CookiePath: "",
 	}
 }

@@ -10,6 +10,9 @@ import {
   StartDownload,
   TagFile,
   SelectOutputDir,
+  OpenFolder,
+  GetLogDir,
+  LogFrontend,
 } from "../wailsjs/go/main/App";
 
 export {
@@ -24,6 +27,9 @@ export {
   StartDownload,
   TagFile,
   SelectOutputDir,
+  OpenFolder,
+  GetLogDir,
+  LogFrontend,
 };
 
 export type DepsStatus = {
@@ -47,7 +53,6 @@ export type Track = {
 };
 
 export type Settings = {
-  autoSelectFirst: boolean;
   outputDir: string;
   cookiePath: string;
 };

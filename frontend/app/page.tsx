@@ -1,230 +1,174 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { StartDownload, TagFile, SearchDeezer, GetSettings } from "@/lib/wails";
+import { StartDownload, TagFile, SearchDeezer, LogFrontend } from "@/lib/wails";
 import { useWailsEvent } from "@/lib/useWailsEvent";
-import type { Settings, Track } from "@/lib/wails";
+import type { Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings2Icon } from "lucide-react";
+import { Info, Settings, Bug } from "lucide-react";
+import { SettingsModal } from "@/components/SettingsModal";
+import { AboutModal } from "@/components/AboutModal";
+import { BugReportModal } from "@/components/BugReportModal";
 
-// Flow:
-// idle → downloading (yt-dlp runs, log streams)
-// → picking (yt-dlp done, user picks Deezer metadata)
-// → tagging (TagFile runs)
-// → done
-type Phase = "idle" | "downloading" | "picking" | "tagging" | "done" | "error";
-
-function formatDuration(s: number) {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
+type Phase = "idle" | "downloading" | "searching" | "tagging" | "done" | "error";
 
 export default function Home() {
   const [url, setUrl] = useState("");
-  const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
-  const [mp3Path, setMp3Path] = useState("");
-  const [results, setResults] = useState<Track[]>([]);
   const [selected, setSelected] = useState<Track | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
   const [donePath, setDonePath] = useState("");
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const [noMetadata, setNoMetadata] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [bugOpen, setBugOpen] = useState(false);
 
-  useEffect(() => {
-    GetSettings().then(setSettings).catch(() => {});
+  const downloadedPathRef = useRef<string>("");
+
+  const logToBackend = useCallback((level: string, msg: string) => {
+    LogFrontend(level, msg).catch(() => { });
   }, []);
 
-  const appendLog = useCallback((line: unknown) => {
-    setLogs((prev) => [...prev, String(line)]);
-  }, []);
+  const onReady = useCallback(
+    async (payload: unknown) => {
+      const { path: filePath } = payload as { path: string };
+      downloadedPathRef.current = filePath;
+      setPhase("searching");
 
-  const onReady = useCallback(async (payload: unknown) => {
-    const { path: filePath, title: ytTitle } = payload as { path: string; title: string };
-    setMp3Path(filePath);
-    appendLog("[done] download complete");
-    const q = query.trim() || ytTitle;
-    appendLog(`[deezer] searching "${q}" ...`);
-    try {
-      const tracks = await SearchDeezer(q);
-      setResults(tracks);
-      if (settings?.autoSelectFirst && tracks.length > 0) {
-        await applyTag(filePath, tracks[0]);
-      } else {
-        setPhase("picking");
+      let tracks: Track[] = [];
+      try {
+        const filename = filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
+        tracks = await SearchDeezer(filename);
+      } catch (e) {
+        logToBackend("warn", `deezer search failed: ${e}`);
       }
-    } catch (e) {
-      appendLog(`[error] deezer search failed: ${e}`);
-      setPhase("error");
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, url, settings]);
 
-  const onError = useCallback((msg: unknown) => {
-    appendLog(`[error] ${msg}`);
-    setPhase("error");
-  }, [appendLog]);
+      if (tracks.length === 0) {
+        logToBackend("warn", "no deezer metadata found — saved without metadata");
+        setNoMetadata(true);
+        setDonePath(filePath);
+        setPhase("done");
+        return;
+      }
+
+      const track = tracks[0];
+      setSelected(track);
+      setPhase("tagging");
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await TagFile({ mp3Path: filePath, track } as any);
+      } catch (e) {
+        logToBackend("error", `tagging failed: ${e}`);
+        setPhase("error");
+      }
+    },
+    [logToBackend]
+  );
+
+  const onError = useCallback(
+    (msg: unknown) => {
+      logToBackend("error", `download:error event: ${msg}`);
+      setPhase("error");
+    },
+    [logToBackend]
+  );
 
   const onDone = useCallback((path: unknown) => {
     setDonePath(String(path));
     setPhase("done");
   }, []);
 
-  useWailsEvent("download:log", appendLog);
   useWailsEvent("download:ready", onReady);
   useWailsEvent("download:error", onError);
   useWailsEvent("download:done", onDone);
 
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
-
   async function handleStart() {
     if (!url.trim()) return;
     setPhase("downloading");
-    setLogs([]);
-    setResults([]);
     setSelected(null);
-    setMp3Path("");
+    downloadedPathRef.current = "";
     setDonePath("");
+    setNoMetadata(false);
+
     try {
       await StartDownload(url);
     } catch (e) {
-      appendLog(`[error] ${e}`);
+      logToBackend("error", `StartDownload failed: ${e}`);
       setPhase("error");
     }
-  }
-
-  async function applyTag(filePath: string, track: Track) {
-    setSelected(track);
-    setPhase("tagging");
-    appendLog(`[tagging] ${track.title} — ${track.artist}`);
-    try {
-      appendLog(`[METADATA] ${filePath} — ${JSON.stringify(track)}`);
-      await TagFile({ mp3Path: filePath, track } as any);
-    } catch (e) {
-      appendLog(`[error] tagging: ${e}`);
-      setPhase("error");
-    }
-  }
-
-  function handleSelectTrack(track: Track) {
-    applyTag(mp3Path, track);
   }
 
   function reset() {
     setUrl("");
-    setQuery("");
     setPhase("idle");
-    setResults([]);
     setSelected(null);
-    setLogs([]);
-    setMp3Path("");
+    downloadedPathRef.current = "";
     setDonePath("");
+    setNoMetadata(false);
   }
 
-  const busy = phase === "downloading" || phase === "tagging";
-  const showLog = phase !== "idle";
+  const busy = phase === "downloading" || phase === "tagging" || phase === "searching";
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <span className="font-semibold text-sm tracking-tight">YT Music Downloader</span>
+        <span className="font-semibold text tracking-tight">YT Music Downloader</span>
         <div className="flex items-center gap-4">
-          <a href="/settings/" className="text-xs text-muted-foreground hover:text-foreground transition-colors" aria-label="Settings" title="Settings">
-            <Settings2Icon size={15} />
-          </a>
-          <a href="/about/" className="text-muted-foreground hover:text-foreground transition-colors" aria-label="About" title="About">
-            <Info size={15} />
-          </a>
+          <button
+            onClick={() => setBugOpen(true)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Report a bug"
+          >
+            <Bug size={24} />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Settings"
+          >
+            <Settings size={24} />
+          </button>
+          <button
+            onClick={() => setAboutOpen(true)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="About"
+          >
+            <Info size={24} />
+          </button>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col gap-6 p-6 max-w-2xl mx-auto w-full">
         <div className="flex flex-col gap-2">
           <label className="text-xs text-muted-foreground">YouTube Music URL</label>
-          <Input
-            placeholder="https://music.youtube.com/watch?v=..."
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            disabled={busy}
-          />
-          <label className="text-xs text-muted-foreground">
-            Deezer search query{" "}
-            <span className="text-muted-foreground/60">(used after download to find metadata)</span>
-          </label>
           <div className="flex gap-2">
             <Input
-              placeholder="Song title + artist name"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              placeholder="https://music.youtube.com/watch?v=..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleStart()}
               disabled={busy}
             />
             <Button onClick={handleStart} disabled={!url.trim() || busy}>
-              {phase === "downloading" ? "Downloading..." : "Download"}
+              {phase === "downloading"
+                ? "Downloading..."
+                : phase === "searching"
+                  ? "Searching..."
+                  : "Download"}
             </Button>
           </div>
         </div>
 
-        {showLog && (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Log</span>
-              {phase === "downloading" && (
-                <span className="text-xs text-yellow-500 animate-pulse">running yt-dlp...</span>
-              )}
-              {phase === "tagging" && (
-                <span className="text-xs text-blue-400 animate-pulse">tagging...</span>
-              )}
-            </div>
-            <ScrollArea className="h-48 rounded-lg border border-border bg-black/40 p-3">
-              <div className="flex flex-col gap-0.5 font-mono text-xs text-green-400">
-                {logs.map((line, i) => (
-                  <span key={i}>{line}</span>
-                ))}
-                <div ref={logEndRef} />
-              </div>
-            </ScrollArea>
-          </div>
-        )}
-
-        {phase === "picking" && results.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-muted-foreground">Select metadata from Deezer</span>
-            <div className="flex flex-col gap-2">
-              {results.map((track) => (
-                <button
-                  key={track.id}
-                  onClick={() => handleSelectTrack(track)}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent transition-colors text-left"
-                >
-                  {track.coverUrl && (
-                    <Image
-                      src={track.coverUrl}
-                      alt={track.album}
-                      width={48}
-                      height={48}
-                      className="rounded object-cover flex-shrink-0"
-                    />
-                  )}
-                  <div className="flex flex-col min-w-0">
-                    <span className="font-medium text-sm truncate">{track.title}</span>
-                    <span className="text-xs text-muted-foreground truncate">
-                      {track.artist} · {track.album}
-                    </span>
-                  </div>
-                  <span className="ml-auto text-xs text-muted-foreground flex-shrink-0">
-                    {formatDuration(track.duration)}
-                  </span>
-                </button>
-              ))}
-            </div>
+        {busy && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground animate-pulse">
+              {phase === "downloading" && "Running yt-dlp..."}
+              {phase === "searching" && "Searching Deezer..."}
+              {phase === "tagging" && "Embedding metadata..."}
+            </span>
           </div>
         )}
 
@@ -253,6 +197,11 @@ export default function Home() {
 
         {phase === "done" && (
           <div className="flex flex-col gap-2">
+            {noMetadata && (
+              <p className="text-xs text-yellow-500">
+                No metadata found on Deezer. Downloaded without metadata.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground break-all">Saved to: {donePath}</p>
             <Button variant="outline" onClick={reset}>
               Download another
@@ -261,11 +210,23 @@ export default function Home() {
         )}
 
         {phase === "error" && (
-          <Button variant="outline" onClick={reset}>
-            Try again
-          </Button>
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-destructive">Something went wrong. Check the log file for details.</p>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={reset}>
+                Try again
+              </Button>
+              <Button variant="outline" onClick={() => setBugOpen(true)}>
+                Report bug
+              </Button>
+            </div>
+          </div>
         )}
       </div>
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+      <BugReportModal open={bugOpen} onClose={() => setBugOpen(false)} />
     </div>
   );
 }
