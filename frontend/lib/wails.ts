@@ -49,7 +49,6 @@ export type Track = {
 };
 
 export type Settings = {
-  autoSelectFirst: boolean;
   outputDir: string;
   cookiePath: string;
 };

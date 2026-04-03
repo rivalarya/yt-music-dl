@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -52,7 +51,6 @@ type Props = { open: boolean; onClose: () => void };
 
 export function SettingsModal({ open, onClose }: Props) {
   const [settings, setSettings] = useState<Settings>({
-    autoSelectFirst: false,
     outputDir: "",
     cookiePath: "",
   });
@@ -60,23 +58,27 @@ export function SettingsModal({ open, onClose }: Props) {
   const [cookieOpen, setCookieOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-
   const [installing, setInstalling] = useState<Record<DepKey, boolean>>({
-    ytDlp: false, ffmpeg: false, deno: false,
+    ytDlp: false,
+    ffmpeg: false,
+    deno: false,
   });
   const [progress, setProgress] = useState<Record<DepKey, number>>({
-    ytDlp: 0, ffmpeg: 0, deno: 0,
+    ytDlp: 0,
+    ffmpeg: 0,
+    deno: 0,
   });
   const [depPhase, setDepPhase] = useState<Record<DepKey, DepPhase>>({
-    ytDlp: "idle", ffmpeg: "idle", deno: "idle",
+    ytDlp: "idle",
+    ffmpeg: "idle",
+    deno: "idle",
   });
-
   const activeDepRef = useRef<DepKey | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    GetSettings().then(setSettings).catch(() => {});
-    CheckDeps().then(setDeps).catch(() => {});
+    GetSettings().then(setSettings).catch(() => { });
+    CheckDeps().then(setDeps).catch(() => { });
   }, [open]);
 
   const onDepLog = useCallback((line: unknown) => {
@@ -122,7 +124,6 @@ export function SettingsModal({ open, onClose }: Props) {
     setInstalling((prev) => ({ ...prev, [key]: true }));
     setProgress((prev) => ({ ...prev, [key]: 0 }));
     setDepPhase((prev) => ({ ...prev, [key]: "downloading" }));
-
     try {
       if (key === "ytDlp") await InstallYtDlp();
       else if (key === "ffmpeg") await InstallFfmpeg();
@@ -151,17 +152,6 @@ export function SettingsModal({ open, onClose }: Props) {
 
           <div className="flex flex-col gap-6">
             <Section title="Download">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex flex-col min-w-0">
-                  <span className="text-sm">Auto-select first Deezer result</span>
-                  <span className="text-xs text-muted-foreground">Skip manual metadata selection</span>
-                </div>
-                <Switch
-                  checked={settings.autoSelectFirst}
-                  onCheckedChange={(v) => setSettings((s) => ({ ...s, autoSelectFirst: v }))}
-                />
-              </div>
-
               <div className="flex flex-col gap-1 pt-1">
                 <label className="text-xs text-muted-foreground">Output directory</label>
                 <div className="flex gap-2">
@@ -238,7 +228,9 @@ export function SettingsModal({ open, onClose }: Props) {
                     <Tooltip text="YouTube sometimes blocks yt-dlp thinking it's a bot. Providing your browser cookies proves you're a real logged-in user, bypassing the block and enabling age-restricted downloads." />
                   </div>
                   <span className="text-xs text-muted-foreground truncate">
-                    {settings.cookiePath ? settings.cookiePath : "Not set — recommended if downloads fail"}
+                    {settings.cookiePath
+                      ? settings.cookiePath
+                      : "Not set — recommended if downloads fail"}
                   </span>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => setCookieOpen(true)}>
@@ -259,7 +251,7 @@ export function SettingsModal({ open, onClose }: Props) {
       <CookieModal
         open={cookieOpen}
         onClose={() => setCookieOpen(false)}
-        onSaved={() => GetSettings().then(setSettings).catch(() => {})}
+        onSaved={() => GetSettings().then(setSettings).catch(() => { })}
       />
     </>
   );
@@ -268,15 +260,26 @@ export function SettingsModal({ open, onClose }: Props) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-3">
-      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</span>
+      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+        {title}
+      </span>
       {children}
     </div>
   );
 }
 
 function DepRow({
-  label, description, ok, version, systemProvided,
-  installing, progress, depPhase, onInstall, disabled, infoText,
+  label,
+  description,
+  ok,
+  version,
+  systemProvided,
+  installing,
+  progress,
+  depPhase,
+  onInstall,
+  disabled,
+  infoText,
 }: {
   label: string;
   description: string;
@@ -306,13 +309,14 @@ function DepRow({
           </div>
           <span className="text-xs text-muted-foreground">{description}</span>
         </div>
-
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="flex flex-col items-end min-w-0">
             {ok === undefined ? (
               <span className="text-xs text-muted-foreground">checking...</span>
             ) : ok ? (
-              <span className="text-xs text-green-500">{systemProvided ? "system" : "installed"}</span>
+              <span className="text-xs text-green-500">
+                {systemProvided ? "system" : "installed"}
+              </span>
             ) : (
               <span className="text-xs text-destructive">missing</span>
             )}
@@ -322,7 +326,6 @@ function DepRow({
               </span>
             )}
           </div>
-
           {!systemProvided && (
             <Button
               variant="outline"
@@ -336,7 +339,6 @@ function DepRow({
           )}
         </div>
       </div>
-
       {installing && (
         <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
           <div
