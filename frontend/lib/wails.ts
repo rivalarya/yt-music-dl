@@ -52,6 +52,14 @@ export type Track = {
   duration: number;
 };
 
+export type TrackReady = {
+  path: string;
+  title: string;
+  track: Track | null;
+  index: number;
+  total: number;
+};
+
 export type Settings = {
   outputDir: string;
   cookiePath: string;

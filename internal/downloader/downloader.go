@@ -17,6 +17,8 @@ type Options struct {
 	CookiePath string
 	BinDir     string
 	UseDeno    bool
+	IsPlaylist bool
+	OnFile     func(path string)
 }
 
 func Run(opts Options, onLog func(string)) (string, error) {
@@ -26,21 +28,33 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	}
 
 	ytDlp := filepath.Join(opts.BinDir, "yt-dlp.exe")
+
+	outputTmpl := filepath.Join(opts.OutputDir, "%(title)s.%(ext)s")
+	if opts.IsPlaylist {
+		outputTmpl = filepath.Join(opts.OutputDir, "%(playlist_index)s - %(title)s.%(ext)s")
+	}
+
 	args := []string{
 		opts.URL,
 		"-f", "bestaudio",
 		"--extract-audio",
 		"--audio-format", "mp3",
 		"--audio-quality", "0",
-		"--output", filepath.Join(opts.OutputDir, "%(title)s.%(ext)s"),
+		"--output", outputTmpl,
 		"--embed-thumbnail",
 		"--convert-thumbnails", "jpg",
-		"--no-playlist",
+	}
+
+	if opts.IsPlaylist {
+		args = append(args, "--yes-playlist")
+	} else {
+		args = append(args, "--no-playlist")
 	}
 
 	if opts.UseDeno {
 		args = append(args, "--js-runtime", "deno", "--remote-components", "ejs:github")
 	}
+
 	if opts.CookiePath != "" {
 		args = append(args, "--cookies", opts.CookiePath)
 	}
@@ -68,7 +82,6 @@ func Run(opts Options, onLog func(string)) (string, error) {
 
 	done := make(chan struct{}, 2)
 
-	// Split on both \n and \r so progress updates emit individually
 	stream := func(r interface{ Read([]byte) (int, error) }) {
 		scanner := bufio.NewScanner(r)
 		scanner.Split(scanCR)
@@ -79,6 +92,19 @@ func Run(opts Options, onLog func(string)) (string, error) {
 			}
 			logger.Log.Info("[yt-dlp] " + line)
 			onLog(line)
+
+			// Detect completed file from log line
+			// Format: [ExtractAudio] Destination: Some Title [id].mp3
+			if opts.OnFile != nil && strings.HasPrefix(line, "[ExtractAudio] Destination:") {
+				dest := strings.TrimPrefix(line, "[ExtractAudio] Destination:")
+				dest = strings.TrimSpace(dest)
+				// dest may be just filename or full path depending on yt-dlp version
+				if !filepath.IsAbs(dest) {
+					dest = filepath.Join(opts.OutputDir, dest)
+				}
+				logger.Log.WithField("path", dest).Info("file ready via ExtractAudio log")
+				opts.OnFile(dest)
+			}
 		}
 		done <- struct{}{}
 	}
@@ -92,6 +118,12 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	if err := cmd.Wait(); err != nil {
 		logger.Log.WithError(err).Error("yt-dlp exited with error")
 		return "", fmt.Errorf("yt-dlp exited: %w", err)
+	}
+
+	// For single track: return the new mp3 path via diff
+	// For playlist: OnFile already called per track, return empty
+	if opts.IsPlaylist {
+		return "", nil
 	}
 
 	after, err := snapMp3s(opts.OutputDir)
@@ -110,7 +142,6 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	return "", fmt.Errorf("download finished but no new mp3 found in %s", opts.OutputDir)
 }
 
-// scanCR is a bufio.SplitFunc that splits on \r or \n, whichever comes first.
 func scanCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
@@ -138,4 +169,10 @@ func snapMp3s(dir string) (map[string]struct{}, error) {
 		}
 	}
 	return m, nil
+}
+
+// IsPlaylistURL returns true if the URL points to a playlist rather than a single video.
+func IsPlaylistURL(url string) bool {
+	return strings.Contains(url, "playlist?list=") ||
+		(strings.Contains(url, "list=") && !strings.Contains(url, "watch?v="))
 }

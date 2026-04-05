@@ -21,9 +21,7 @@ type App struct{ ctx context.Context }
 
 func NewApp() *App { return &App{} }
 
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-}
+func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
 func (a *App) CheckDeps() (deps.DepStatus, error) {
 	logger.Log.Info("checking dependencies")
@@ -104,9 +102,19 @@ func (a *App) SearchDeezer(query string) ([]deezer.Track, error) {
 	return tracks, err
 }
 
+// DownloadReady is emitted for single-track downloads.
 type DownloadReady struct {
 	Path  string `json:"path"`
 	Title string `json:"title"`
+}
+
+// TrackReady is emitted per-track for both single and playlist downloads.
+type TrackReady struct {
+	Path  string        `json:"path"`
+	Title string        `json:"title"`
+	Track *deezer.Track `json:"track"` // nil if no Deezer match
+	Index int           `json:"index"` // 1-based, playlist position
+	Total int           `json:"total"` // 0 if unknown (single track)
 }
 
 func (a *App) StartDownload(url string) error {
@@ -114,41 +122,112 @@ func (a *App) StartDownload(url string) error {
 	if err != nil {
 		return err
 	}
+
 	binDir, err := deps.BinDir()
 	if err != nil {
 		return err
 	}
+
 	if err := os.MkdirAll(s.OutputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
+
 	depStatus, err := deps.Check()
 	if err != nil {
 		return err
 	}
 
-	logger.Log.WithField("url", url).Info("starting download")
+	isPlaylist := downloader.IsPlaylistURL(url)
+	logger.Log.WithFields(map[string]interface{}{
+		"url":        url,
+		"isPlaylist": isPlaylist,
+	}).Info("starting download")
 
 	go func() {
+		trackIndex := 0
+
 		mp3Path, err := downloader.Run(downloader.Options{
 			URL:        url,
 			OutputDir:  s.OutputDir,
 			CookiePath: s.CookiePath,
 			BinDir:     binDir,
 			UseDeno:    depStatus.Deno,
+			IsPlaylist: isPlaylist,
+			OnFile: func(path string) {
+				trackIndex++
+				idx := trackIndex
+				go a.processTrack(path, idx, 0)
+			},
 		}, func(line string) {
 			logger.Log.Info("[yt-dlp] " + line)
 			runtime.EventsEmit(a.ctx, "download:log", line)
 		})
+
 		if err != nil {
 			logger.Log.WithError(err).Error("download failed")
 			runtime.EventsEmit(a.ctx, "download:error", err.Error())
 			return
 		}
-		title := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
-		logger.Log.WithField("path", mp3Path).Info("download complete")
-		runtime.EventsEmit(a.ctx, "download:ready", DownloadReady{Path: mp3Path, Title: title})
+
+		// Single track: mp3Path is set, OnFile was NOT called (no ExtractAudio log match)
+		// This handles the case where OnFile already fired via log parsing.
+		// If OnFile fired, trackIndex > 0, skip this.
+		if !isPlaylist && mp3Path != "" && trackIndex == 0 {
+			go a.processTrack(mp3Path, 1, 0)
+		}
+
+		if isPlaylist {
+			runtime.EventsEmit(a.ctx, "download:playlist-done", nil)
+		}
 	}()
+
 	return nil
+}
+
+// processTrack searches Deezer, tags the file, and emits download:track.
+func (a *App) processTrack(mp3Path string, index int, total int) {
+	filename := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
+	// Strip playlist index prefix "01 - Title" → "Title"
+	if idx := strings.Index(filename, " - "); idx != -1 {
+		candidate := filename[idx+3:]
+		if candidate != "" {
+			filename = candidate
+		}
+	}
+
+	logger.Log.WithFields(map[string]interface{}{
+		"path":  mp3Path,
+		"query": filename,
+		"index": index,
+	}).Info("processing track")
+
+	var matched *deezer.Track
+
+	tracks, err := deezer.Search(filename)
+	if err != nil {
+		logger.Log.WithError(err).Warn("deezer search failed")
+	} else if len(tracks) > 0 {
+		matched = &tracks[0]
+	}
+
+	if matched != nil {
+		if err := metadata.Tag(mp3Path, metadata.Tags{
+			Title:    matched.Title,
+			Artist:   matched.Artist,
+			Album:    matched.Album,
+			CoverURL: matched.CoverURL,
+		}); err != nil {
+			logger.Log.WithError(err).Warn("tagging failed")
+		}
+	}
+
+	runtime.EventsEmit(a.ctx, "download:track", TrackReady{
+		Path:  mp3Path,
+		Title: filename,
+		Track: matched,
+		Index: index,
+		Total: total,
+	})
 }
 
 type TagRequest struct {
@@ -171,6 +250,7 @@ func (a *App) TagFile(req TagRequest) error {
 	}); err != nil {
 		logger.Log.WithError(err).Warn("tagging failed")
 	}
+
 	runtime.EventsEmit(a.ctx, "download:done", req.Mp3Path)
 	return nil
 }

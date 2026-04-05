@@ -4,29 +4,87 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { StartDownload, TagFile, SearchDeezer, LogFrontend, CheckDeps } from "@/lib/wails";
+import { StartDownload, LogFrontend, CheckDeps } from "@/lib/wails";
 import { useWailsEvent } from "@/lib/useWailsEvent";
 import type { Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings, Bug, AlertTriangle } from "lucide-react";
+import { Info, Settings, Bug, AlertTriangle, Music } from "lucide-react";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AboutModal } from "@/components/AboutModal";
 import { BugReportModal } from "@/components/BugReportModal";
 
-type Phase = "idle" | "downloading" | "searching" | "tagging" | "done" | "error";
+type TrackPhase = "tagging" | "done" | "error";
+
+type TrackItem = {
+  index: number;
+  path: string;
+  title: string;
+  track: Track | null;
+  phase: TrackPhase;
+};
+
+type Phase = "idle" | "downloading" | "done" | "error";
+
+function isPlaylistUrl(url: string): boolean {
+  return (
+    url.includes("playlist?list=") ||
+    (url.includes("list=") && !url.includes("watch?v="))
+  );
+}
+
+function TrackCard({ item }: { item: TrackItem }) {
+  const badgeVariant = item.phase === "done" ? "outline" : "secondary";
+  const badgeLabel =
+    item.phase === "tagging"
+      ? "Tagging..."
+      : item.phase === "done"
+        ? "Done"
+        : "Error";
+
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/20">
+      {item.track?.coverUrl ? (
+        <Image
+          src={item.track.coverUrl}
+          alt={item.track.album}
+          width={44}
+          height={44}
+          className="rounded object-cover flex-shrink-0"
+        />
+      ) : (
+        <div className="w-11 h-11 rounded bg-muted flex items-center justify-center flex-shrink-0">
+          <Music size={16} className="text-muted-foreground" />
+        </div>
+      )}
+      <div className="flex flex-col min-w-0 flex-1">
+        <span className="font-medium text-sm truncate">
+          {item.track?.title ?? item.title}
+        </span>
+        {item.track ? (
+          <span className="text-xs text-muted-foreground truncate">
+            {item.track.artist} · {item.track.album}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">No metadata found</span>
+        )}
+      </div>
+      <Badge variant={badgeVariant} className="flex-shrink-0 ml-auto">
+        {badgeLabel}
+      </Badge>
+    </div>
+  );
+}
 
 export default function Home() {
   const [url, setUrl] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
-  const [selected, setSelected] = useState<Track | null>(null);
-  const [donePath, setDonePath] = useState("");
-  const [noMetadata, setNoMetadata] = useState(false);
+  const [tracks, setTracks] = useState<TrackItem[]>([]);
   const [dlPercent, setDlPercent] = useState(0);
+  const [playlistInfo, setPlaylistInfo] = useState<{ current: number; total: number } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [bugOpen, setBugOpen] = useState(false);
   const [missingDeps, setMissingDeps] = useState<string[]>([]);
-  const downloadedPathRef = useRef<string>("");
 
   const logToBackend = useCallback((level: string, msg: string) => {
     LogFrontend(level, msg).catch(() => { });
@@ -55,54 +113,55 @@ export default function Home() {
       .catch(() => { });
   }
 
-  // Parse yt-dlp log lines for percentage
   const onDownloadLog = useCallback((line: unknown) => {
     const text = String(line);
-    // yt-dlp outputs: "[download]  45.3% of ..."
-    const match = text.match(/\[download\]\s+([\d.]+)%/);
-    if (match) {
-      setDlPercent(Math.round(parseFloat(match[1])));
+
+    const pctMatch = text.match(/\[download\]\s+([\d.]+)%/);
+    if (pctMatch) {
+      setDlPercent(Math.round(parseFloat(pctMatch[1])));
+    }
+
+    // "[download] Downloading item 3 of 13"
+    const itemMatch = text.match(/Downloading item (\d+) of (\d+)/);
+    if (itemMatch) {
+      setPlaylistInfo({
+        current: parseInt(itemMatch[1]),
+        total: parseInt(itemMatch[2]),
+      });
+      setDlPercent(0);
     }
   }, []);
 
   useWailsEvent("download:log", onDownloadLog);
 
-  const onReady = useCallback(
-    async (payload: unknown) => {
-      const { path: filePath } = payload as { path: string };
-      downloadedPathRef.current = filePath;
-      setDlPercent(100);
-      setPhase("searching");
+  const onTrack = useCallback(
+    (payload: unknown) => {
+      const { path, title, track, index } = payload as {
+        path: string;
+        title: string;
+        track: Track | null;
+        index: number;
+        total: number;
+      };
 
-      let tracks: Track[] = [];
-      try {
-        const filename = filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
-        tracks = await SearchDeezer(filename);
-      } catch (e) {
-        logToBackend("warn", `deezer search failed: ${e}`);
-      }
-
-      if (tracks.length === 0) {
-        logToBackend("warn", "no deezer metadata found — saved without metadata");
-        setNoMetadata(true);
-        setDonePath(filePath);
-        setPhase("done");
-        return;
-      }
-
-      const track = tracks[0];
-      setSelected(track);
-      setPhase("tagging");
-
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await TagFile({ mp3Path: filePath, track } as any);
-      } catch (e) {
-        logToBackend("error", `tagging failed: ${e}`);
-        setPhase("error");
-      }
+      setTracks((prev) => {
+        const existing = prev.findIndex((t) => t.index === index);
+        const item: TrackItem = {
+          index,
+          path,
+          title,
+          track,
+          phase: "done",
+        };
+        if (existing !== -1) {
+          const next = [...prev];
+          next[existing] = item;
+          return next;
+        }
+        return [...prev, item].sort((a, b) => a.index - b.index);
+      });
     },
-    [logToBackend]
+    []
   );
 
   const onError = useCallback(
@@ -113,23 +172,27 @@ export default function Home() {
     [logToBackend]
   );
 
-  const onDone = useCallback((path: unknown) => {
-    setDonePath(String(path));
+  const onPlaylistDone = useCallback(() => {
     setPhase("done");
   }, []);
 
-  useWailsEvent("download:ready", onReady);
+  // Single track backward compat: "download:done" still fires from TagFile
+  const onDone = useCallback(() => {
+    setPhase("done");
+  }, []);
+
+  useWailsEvent("download:track", onTrack);
   useWailsEvent("download:error", onError);
+  useWailsEvent("download:playlist-done", onPlaylistDone);
   useWailsEvent("download:done", onDone);
 
   async function handleStart() {
     if (!url.trim()) return;
     setPhase("downloading");
-    setSelected(null);
+    setTracks([]);
     setDlPercent(0);
-    downloadedPathRef.current = "";
-    setDonePath("");
-    setNoMetadata(false);
+    setPlaylistInfo(null);
+
     try {
       await StartDownload(url);
     } catch (e) {
@@ -141,26 +204,21 @@ export default function Home() {
   function reset() {
     setUrl("");
     setPhase("idle");
-    setSelected(null);
+    setTracks([]);
     setDlPercent(0);
-    downloadedPathRef.current = "";
-    setDonePath("");
-    setNoMetadata(false);
+    setPlaylistInfo(null);
   }
 
-  const busy = phase === "downloading" || phase === "tagging" || phase === "searching";
+  const busy = phase === "downloading";
+  const playlist = isPlaylistUrl(url);
 
-  const badgeLabel = () => {
-    if (phase === "tagging") return "Tagging...";
-    if (phase === "searching") return "Searching...";
-    if (phase === "done") return "Done";
-    return null;
-  };
+  const doneCount = tracks.filter((t) => t.phase === "done").length;
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
+      {/* Header */}
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-        <span className="font-semibold text tracking-tight">YT Music Downloader</span>
+        <span className="font-semibold tracking-tight">YT Music Downloader</span>
         <div className="flex items-center gap-4">
           <button
             onClick={() => setBugOpen(true)}
@@ -186,12 +244,14 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Missing deps banner */}
       {missingDeps.length > 0 && (
         <div className="flex items-center gap-3 px-6 py-3 bg-destructive/10 border-b border-destructive/30 text-destructive">
           <AlertTriangle size={16} className="flex-shrink-0" />
           <span className="text-xs flex-1">
             Required dependencies missing:{" "}
-            <span className="font-semibold">{missingDeps.join(", ")}</span>. Downloads will not work until they are installed.
+            <span className="font-semibold">{missingDeps.join(", ")}</span>.
+            Downloads will not work until they are installed.
           </span>
           <button
             onClick={() => setSettingsOpen(true)}
@@ -203,33 +263,47 @@ export default function Home() {
       )}
 
       <div className="flex-1 flex flex-col gap-6 p-6 max-w-2xl mx-auto w-full">
+        {/* URL input */}
         <div className="flex flex-col gap-2">
-          <label className="text-xs text-muted-foreground">YouTube Music URL</label>
+          <label className="text-xs text-muted-foreground">
+            YouTube Music URL{" "}
+            {url && (
+              <span className="text-primary font-medium">
+                — {playlist ? "Playlist" : "Single track"}
+              </span>
+            )}
+          </label>
           <div className="flex gap-2">
             <Input
-              placeholder="https://music.youtube.com/watch?v=..."
+              placeholder="https://music.youtube.com/watch?v=... or playlist?list=..."
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleStart()}
               disabled={busy}
             />
             <Button onClick={handleStart} disabled={!url.trim() || busy}>
-              {phase === "downloading"
-                ? "Downloading..."
-                : phase === "searching"
-                  ? "Searching..."
-                  : "Download"}
+              {busy ? "Downloading..." : "Download"}
             </Button>
           </div>
         </div>
 
-        {/* Download progress — shown during downloading phase */}
+        {/* Progress bar */}
         {phase === "downloading" && (
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground animate-pulse">Downloading...</span>
+              {playlistInfo ? (
+                <span className="text-xs text-muted-foreground animate-pulse">
+                  Track {playlistInfo.current} of {playlistInfo.total}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground animate-pulse">
+                  Downloading...
+                </span>
+              )}
               {dlPercent > 0 && (
-                <span className="text-xs tabular-nums text-muted-foreground">{dlPercent}%</span>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {dlPercent}%
+                </span>
               )}
             </div>
             <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
@@ -241,63 +315,34 @@ export default function Home() {
           </div>
         )}
 
-        {/* Searching/tagging status */}
-        {(phase === "searching" || phase === "tagging") && !selected && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground animate-pulse">
-              {phase === "searching" && "Searching Deezer..."}
-              {phase === "tagging" && "Embedding metadata..."}
-            </span>
-          </div>
-        )}
-
-        {/* Metadata card — shown during tagging and done */}
-        {selected && (phase === "tagging" || phase === "done") && (
+        {/* Track list */}
+        {tracks.length > 0 && (
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/30">
-              {selected.coverUrl && (
-                <Image
-                  src={selected.coverUrl}
-                  alt={selected.album}
-                  width={48}
-                  height={48}
-                  className="rounded object-cover flex-shrink-0"
-                />
-              )}
-              <div className="flex flex-col min-w-0">
-                <span className="font-medium text-sm truncate">{selected.title}</span>
-                <span className="text-xs text-muted-foreground truncate">
-                  {selected.artist} · {selected.album}
+            {(phase === "done" || playlistInfo) && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {phase === "done"
+                    ? `${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
+                    : `${doneCount} of ${playlistInfo?.total ?? "?"} tagged`}
                 </span>
               </div>
-              <Badge variant="outline" className="ml-auto flex-shrink-0">
-                {badgeLabel()}
-              </Badge>
+            )}
+            <div className="flex flex-col gap-2">
+              {tracks.map((item) => (
+                <TrackCard key={item.index} item={item} />
+              ))}
             </div>
-
-            {/* Progress bar below the card during tagging */}
-            {phase === "tagging" && (
-              <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-primary animate-pulse" style={{ width: "100%" }} />
-              </div>
-            )}
           </div>
         )}
 
+        {/* Done actions */}
         {phase === "done" && (
-          <div className="flex flex-col gap-2">
-            {noMetadata && (
-              <p className="text-xs text-yellow-500">
-                No metadata found on Deezer. Downloaded without metadata.
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground break-all">Saved to: {donePath}</p>
-            <Button variant="outline" onClick={reset}>
-              Download another
-            </Button>
-          </div>
+          <Button variant="outline" onClick={reset}>
+            Download another
+          </Button>
         )}
 
+        {/* Error */}
         {phase === "error" && (
           <div className="flex flex-col gap-2">
             <p className="text-xs text-destructive">
