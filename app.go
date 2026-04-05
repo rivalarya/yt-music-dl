@@ -173,7 +173,10 @@ func (a *App) StartDownload(url string) error {
 		// This handles the case where OnFile already fired via log parsing.
 		// If OnFile fired, trackIndex > 0, skip this.
 		if !isPlaylist && mp3Path != "" && trackIndex == 0 {
-			go a.processTrack(mp3Path, 1, 0)
+			go func() {
+				a.processTrack(mp3Path, 1, 0)
+				runtime.EventsEmit(a.ctx, "download:done", nil)
+			}()
 		}
 
 		if isPlaylist {

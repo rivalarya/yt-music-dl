@@ -95,7 +95,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 
 			// Detect completed file from log line
 			// Format: [ExtractAudio] Destination: Some Title [id].mp3
-			if opts.OnFile != nil && strings.HasPrefix(line, "[ExtractAudio] Destination:") {
+			if opts.OnFile != nil && opts.IsPlaylist && strings.HasPrefix(line, "[ExtractAudio] Destination:") {
 				dest := strings.TrimPrefix(line, "[ExtractAudio] Destination:")
 				dest = strings.TrimSpace(dest)
 				// dest may be just filename or full path depending on yt-dlp version
