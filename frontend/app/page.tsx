@@ -21,11 +21,11 @@ export default function Home() {
   const [selected, setSelected] = useState<Track | null>(null);
   const [donePath, setDonePath] = useState("");
   const [noMetadata, setNoMetadata] = useState(false);
+  const [dlPercent, setDlPercent] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [bugOpen, setBugOpen] = useState(false);
   const [missingDeps, setMissingDeps] = useState<string[]>([]);
-
   const downloadedPathRef = useRef<string>("");
 
   const logToBackend = useCallback((level: string, msg: string) => {
@@ -43,7 +43,6 @@ export default function Home() {
       .catch(() => { });
   }, []);
 
-  // Re-check deps when settings modal closes (user may have just installed something)
   function handleSettingsClose() {
     setSettingsOpen(false);
     CheckDeps()
@@ -56,16 +55,28 @@ export default function Home() {
       .catch(() => { });
   }
 
+  // Parse yt-dlp log lines for percentage
+  const onDownloadLog = useCallback((line: unknown) => {
+    const text = String(line);
+    // yt-dlp outputs: "[download]  45.3% of ..."
+    const match = text.match(/\[download\]\s+([\d.]+)%/);
+    if (match) {
+      setDlPercent(Math.round(parseFloat(match[1])));
+    }
+  }, []);
+
+  useWailsEvent("download:log", onDownloadLog);
+
   const onReady = useCallback(
     async (payload: unknown) => {
       const { path: filePath } = payload as { path: string };
       downloadedPathRef.current = filePath;
+      setDlPercent(100);
       setPhase("searching");
 
       let tracks: Track[] = [];
       try {
-        const filename =
-          filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
+        const filename = filePath.split(/[\\/]/).pop()?.replace(/\.mp3$/i, "") ?? "";
         tracks = await SearchDeezer(filename);
       } catch (e) {
         logToBackend("warn", `deezer search failed: ${e}`);
@@ -115,6 +126,7 @@ export default function Home() {
     if (!url.trim()) return;
     setPhase("downloading");
     setSelected(null);
+    setDlPercent(0);
     downloadedPathRef.current = "";
     setDonePath("");
     setNoMetadata(false);
@@ -130,13 +142,20 @@ export default function Home() {
     setUrl("");
     setPhase("idle");
     setSelected(null);
+    setDlPercent(0);
     downloadedPathRef.current = "";
     setDonePath("");
     setNoMetadata(false);
   }
 
-  const busy =
-    phase === "downloading" || phase === "tagging" || phase === "searching";
+  const busy = phase === "downloading" || phase === "tagging" || phase === "searching";
+
+  const badgeLabel = () => {
+    if (phase === "tagging") return "Tagging...";
+    if (phase === "searching") return "Searching...";
+    if (phase === "done") return "Done";
+    return null;
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
@@ -172,8 +191,7 @@ export default function Home() {
           <AlertTriangle size={16} className="flex-shrink-0" />
           <span className="text-xs flex-1">
             Required dependencies missing:{" "}
-            <span className="font-semibold">{missingDeps.join(", ")}</span>.
-            Downloads will not work until they are installed.
+            <span className="font-semibold">{missingDeps.join(", ")}</span>. Downloads will not work until they are installed.
           </span>
           <button
             onClick={() => setSettingsOpen(true)}
@@ -205,36 +223,64 @@ export default function Home() {
           </div>
         </div>
 
-        {busy && (
+        {/* Download progress — shown during downloading phase */}
+        {phase === "downloading" && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground animate-pulse">Downloading...</span>
+              {dlPercent > 0 && (
+                <span className="text-xs tabular-nums text-muted-foreground">{dlPercent}%</span>
+              )}
+            </div>
+            <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all duration-150 ease-linear"
+                style={{ width: `${dlPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Searching/tagging status */}
+        {(phase === "searching" || phase === "tagging") && !selected && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground animate-pulse">
-              {phase === "downloading" && "Running yt-dlp..."}
               {phase === "searching" && "Searching Deezer..."}
               {phase === "tagging" && "Embedding metadata..."}
             </span>
           </div>
         )}
 
+        {/* Metadata card — shown during tagging and done */}
         {selected && (phase === "tagging" || phase === "done") && (
-          <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/30">
-            {selected.coverUrl && (
-              <Image
-                src={selected.coverUrl}
-                alt={selected.album}
-                width={48}
-                height={48}
-                className="rounded object-cover flex-shrink-0"
-              />
-            )}
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium text-sm truncate">{selected.title}</span>
-              <span className="text-xs text-muted-foreground truncate">
-                {selected.artist} · {selected.album}
-              </span>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/30">
+              {selected.coverUrl && (
+                <Image
+                  src={selected.coverUrl}
+                  alt={selected.album}
+                  width={48}
+                  height={48}
+                  className="rounded object-cover flex-shrink-0"
+                />
+              )}
+              <div className="flex flex-col min-w-0">
+                <span className="font-medium text-sm truncate">{selected.title}</span>
+                <span className="text-xs text-muted-foreground truncate">
+                  {selected.artist} · {selected.album}
+                </span>
+              </div>
+              <Badge variant="outline" className="ml-auto flex-shrink-0">
+                {badgeLabel()}
+              </Badge>
             </div>
-            <Badge variant="outline" className="ml-auto flex-shrink-0">
-              {phase === "tagging" ? "Tagging..." : "Done"}
-            </Badge>
+
+            {/* Progress bar below the card during tagging */}
+            {phase === "tagging" && (
+              <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-primary animate-pulse" style={{ width: "100%" }} />
+              </div>
+            )}
           </div>
         )}
 
@@ -245,9 +291,7 @@ export default function Home() {
                 No metadata found on Deezer. Downloaded without metadata.
               </p>
             )}
-            <p className="text-xs text-muted-foreground break-all">
-              Saved to: {donePath}
-            </p>
+            <p className="text-xs text-muted-foreground break-all">Saved to: {donePath}</p>
             <Button variant="outline" onClick={reset}>
               Download another
             </Button>

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"yt-music-dl/internal/logger"
 )
@@ -36,6 +37,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 		"--convert-thumbnails", "jpg",
 		"--no-playlist",
 	}
+
 	if opts.UseDeno {
 		args = append(args, "--js-runtime", "deno", "--remote-components", "ejs:github")
 	}
@@ -59,22 +61,31 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start yt-dlp: %w", err)
 	}
 
 	done := make(chan struct{}, 2)
+
+	// Split on both \n and \r so progress updates emit individually
 	stream := func(r interface{ Read([]byte) (int, error) }) {
 		scanner := bufio.NewScanner(r)
+		scanner.Split(scanCR)
 		for scanner.Scan() {
-			line := scanner.Text()
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
 			logger.Log.Info("[yt-dlp] " + line)
 			onLog(line)
 		}
 		done <- struct{}{}
 	}
+
 	go stream(stdout)
 	go stream(stderr)
+
 	<-done
 	<-done
 
@@ -87,6 +98,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read dir after download: %w", err)
 	}
+
 	for name := range after {
 		if _, existed := before[name]; !existed {
 			path := filepath.Join(opts.OutputDir, name)
@@ -94,7 +106,24 @@ func Run(opts Options, onLog func(string)) (string, error) {
 			return path, nil
 		}
 	}
+
 	return "", fmt.Errorf("download finished but no new mp3 found in %s", opts.OutputDir)
+}
+
+// scanCR is a bufio.SplitFunc that splits on \r or \n, whichever comes first.
+func scanCR(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	for i, b := range data {
+		if b == '\r' || b == '\n' {
+			return i + 1, data[:i], nil
+		}
+	}
+	if atEOF {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func snapMp3s(dir string) (map[string]struct{}, error) {
