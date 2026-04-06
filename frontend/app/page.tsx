@@ -1,20 +1,19 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { StartDownload, LogFrontend, CheckDeps } from "@/lib/wails";
+import { StartDownload, CancelDownload, LogFrontend, CheckDeps } from "@/lib/wails";
 import { useWailsEvent } from "@/lib/useWailsEvent";
 import type { Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings, Bug, AlertTriangle, Music } from "lucide-react";
+import { Info, Settings, Bug, AlertTriangle, Music, Square } from "lucide-react";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AboutModal } from "@/components/AboutModal";
 import { BugReportModal } from "@/components/BugReportModal";
 
 type TrackPhase = "tagging" | "done" | "error";
-
 type TrackItem = {
   index: number;
   path: string;
@@ -23,7 +22,7 @@ type TrackItem = {
   phase: TrackPhase;
 };
 
-type Phase = "idle" | "downloading" | "done" | "error";
+type Phase = "idle" | "downloading" | "done" | "cancelled" | "error";
 
 function isPlaylistUrl(url: string): boolean {
   return (
@@ -85,6 +84,7 @@ export default function Home() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [bugOpen, setBugOpen] = useState(false);
   const [missingDeps, setMissingDeps] = useState<string[]>([]);
+  const [stopping, setStopping] = useState(false);
 
   const logToBackend = useCallback((level: string, msg: string) => {
     LogFrontend(level, msg).catch(() => { });
@@ -115,13 +115,10 @@ export default function Home() {
 
   const onDownloadLog = useCallback((line: unknown) => {
     const text = String(line);
-
     const pctMatch = text.match(/\[download\]\s+([\d.]+)%/);
     if (pctMatch) {
       setDlPercent(Math.round(parseFloat(pctMatch[1])));
     }
-
-    // "[download] Downloading item 3 of 13"
     const itemMatch = text.match(/Downloading item (\d+) of (\d+)/);
     if (itemMatch) {
       setPlaylistInfo({
@@ -134,55 +131,53 @@ export default function Home() {
 
   useWailsEvent("download:log", onDownloadLog);
 
-  const onTrack = useCallback(
-    (payload: unknown) => {
-      const { path, title, track, index } = payload as {
-        path: string;
-        title: string;
-        track: Track | null;
-        index: number;
-        total: number;
-      };
-
-      setTracks((prev) => {
-        const existing = prev.findIndex((t) => t.index === index);
-        const item: TrackItem = {
-          index,
-          path,
-          title,
-          track,
-          phase: "done",
-        };
-        if (existing !== -1) {
-          const next = [...prev];
-          next[existing] = item;
-          return next;
-        }
-        return [...prev, item].sort((a, b) => a.index - b.index);
-      });
-    },
-    []
-  );
+  const onTrack = useCallback((payload: unknown) => {
+    const { path, title, track, index } = payload as {
+      path: string;
+      title: string;
+      track: Track | null;
+      index: number;
+      total: number;
+    };
+    setTracks((prev) => {
+      const existing = prev.findIndex((t) => t.index === index);
+      const item: TrackItem = { index, path, title, track, phase: "done" };
+      if (existing !== -1) {
+        const next = [...prev];
+        next[existing] = item;
+        return next;
+      }
+      return [...prev, item].sort((a, b) => a.index - b.index);
+    });
+  }, []);
 
   const onError = useCallback(
     (msg: unknown) => {
       logToBackend("error", `download:error event: ${msg}`);
       setPhase("error");
+      setStopping(false);
     },
     [logToBackend]
   );
 
-  const onPlaylistDone = useCallback(() => {
-    setPhase("done");
+  const onCancelled = useCallback(() => {
+    setPhase("cancelled");
+    setStopping(false);
   }, []);
 
-  // Single track backward compat: "download:done" still fires from TagFile
+  const onPlaylistDone = useCallback(() => {
+    setPhase("done");
+    setStopping(false);
+  }, []);
+
   const onDone = useCallback(() => {
     setPhase("done");
+    setStopping(false);
   }, []);
 
   useWailsEvent("download:track", onTrack);
   useWailsEvent("download:error", onError);
+  useWailsEvent("download:cancelled", onCancelled);
   useWailsEvent("download:playlist-done", onPlaylistDone);
   useWailsEvent("download:done", onDone);
 
@@ -192,12 +187,22 @@ export default function Home() {
     setTracks([]);
     setDlPercent(0);
     setPlaylistInfo(null);
-
+    setStopping(false);
     try {
       await StartDownload(url);
     } catch (e) {
       logToBackend("error", `StartDownload failed: ${e}`);
       setPhase("error");
+    }
+  }
+
+  async function handleStop() {
+    setStopping(true);
+    try {
+      await CancelDownload();
+    } catch (e) {
+      logToBackend("error", `CancelDownload failed: ${e}`);
+      setStopping(false);
     }
   }
 
@@ -207,11 +212,11 @@ export default function Home() {
     setTracks([]);
     setDlPercent(0);
     setPlaylistInfo(null);
+    setStopping(false);
   }
 
   const busy = phase === "downloading";
   const playlist = isPlaylistUrl(url);
-
   const doneCount = tracks.filter((t) => t.phase === "done").length;
 
   return (
@@ -287,24 +292,36 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Progress bar */}
+        {/* Progress bar + Stop button */}
         {phase === "downloading" && (
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
-              {playlistInfo ? (
-                <span className="text-xs text-muted-foreground animate-pulse">
-                  Track {playlistInfo.current} of {playlistInfo.total}
-                </span>
-              ) : (
-                <span className="text-xs text-muted-foreground animate-pulse">
-                  Downloading...
-                </span>
-              )}
-              {dlPercent > 0 && (
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {dlPercent}%
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {playlistInfo ? (
+                  <span className="text-xs text-muted-foreground animate-pulse">
+                    Track {playlistInfo.current} of {playlistInfo.total}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground animate-pulse">
+                    Downloading...
+                  </span>
+                )}
+                {dlPercent > 0 && (
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {dlPercent}%
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleStop}
+                disabled={stopping}
+                className="h-7 px-2.5 gap-1.5 text-xs"
+              >
+                <Square size={11} />
+                {stopping ? "Stopping..." : "Stop"}
+              </Button>
             </div>
             <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
               <div
@@ -318,12 +335,14 @@ export default function Home() {
         {/* Track list */}
         {tracks.length > 0 && (
           <div className="flex flex-col gap-2">
-            {(phase === "done" || playlistInfo) && (
+            {(phase === "done" || phase === "cancelled" || playlistInfo) && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">
-                  {phase === "done"
-                    ? `${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
-                    : `${doneCount} of ${playlistInfo?.total ?? "?"} tagged`}
+                  {phase === "cancelled"
+                    ? `Stopped — ${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
+                    : phase === "done"
+                      ? `${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
+                      : `${doneCount} of ${playlistInfo?.total ?? "?"} tagged`}
                 </span>
               </div>
             )}
@@ -336,7 +355,7 @@ export default function Home() {
         )}
 
         {/* Done actions */}
-        {phase === "done" && (
+        {(phase === "done" || phase === "cancelled") && (
           <Button variant="outline" onClick={reset}>
             Download another
           </Button>

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"yt-music-dl/internal/deezer"
 	"yt-music-dl/internal/deps"
 	"yt-music-dl/internal/downloader"
@@ -17,7 +18,11 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-type App struct{ ctx context.Context }
+type App struct {
+	ctx      context.Context
+	cancelDl context.CancelFunc
+	cancelMu sync.Mutex
+}
 
 func NewApp() *App { return &App{} }
 
@@ -56,9 +61,7 @@ func (a *App) InstallDeno() error {
 	})
 }
 
-func (a *App) GetSettings() (settings.Settings, error) {
-	return settings.Load()
-}
+func (a *App) GetSettings() (settings.Settings, error) { return settings.Load() }
 
 func (a *App) SaveSettings(s settings.Settings) error {
 	logger.Log.WithField("outputDir", s.OutputDir).Info("saving settings")
@@ -102,7 +105,6 @@ func (a *App) SearchDeezer(query string) ([]deezer.Track, error) {
 	return tracks, err
 }
 
-// DownloadReady is emitted for single-track downloads.
 type DownloadReady struct {
 	Path  string `json:"path"`
 	Title string `json:"title"`
@@ -112,9 +114,19 @@ type DownloadReady struct {
 type TrackReady struct {
 	Path  string        `json:"path"`
 	Title string        `json:"title"`
-	Track *deezer.Track `json:"track"` // nil if no Deezer match
+	Track *deezer.Track `json:"track"`
 	Index int           `json:"index"` // 1-based, playlist position
 	Total int           `json:"total"` // 0 if unknown (single track)
+}
+
+func (a *App) CancelDownload() {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	if a.cancelDl != nil {
+		logger.Log.Info("cancelling download")
+		a.cancelDl()
+		a.cancelDl = nil
+	}
 }
 
 func (a *App) StartDownload(url string) error {
@@ -143,9 +155,19 @@ func (a *App) StartDownload(url string) error {
 		"isPlaylist": isPlaylist,
 	}).Info("starting download")
 
-	go func() {
-		trackIndex := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancelMu.Lock()
+	a.cancelDl = cancel
+	a.cancelMu.Unlock()
 
+	go func() {
+		defer func() {
+			a.cancelMu.Lock()
+			a.cancelDl = nil
+			a.cancelMu.Unlock()
+		}()
+
+		trackIndex := 0
 		mp3Path, err := downloader.Run(downloader.Options{
 			URL:        url,
 			OutputDir:  s.OutputDir,
@@ -153,6 +175,7 @@ func (a *App) StartDownload(url string) error {
 			BinDir:     binDir,
 			UseDeno:    depStatus.Deno,
 			IsPlaylist: isPlaylist,
+			Ctx:        ctx,
 			OnFile: func(path string) {
 				trackIndex++
 				idx := trackIndex
@@ -164,14 +187,16 @@ func (a *App) StartDownload(url string) error {
 		})
 
 		if err != nil {
+			if err == context.Canceled {
+				logger.Log.Info("download cancelled")
+				runtime.EventsEmit(a.ctx, "download:cancelled", nil)
+				return
+			}
 			logger.Log.WithError(err).Error("download failed")
 			runtime.EventsEmit(a.ctx, "download:error", err.Error())
 			return
 		}
 
-		// Single track: mp3Path is set, OnFile was NOT called (no ExtractAudio log match)
-		// This handles the case where OnFile already fired via log parsing.
-		// If OnFile fired, trackIndex > 0, skip this.
 		if !isPlaylist && mp3Path != "" && trackIndex == 0 {
 			go func() {
 				a.processTrack(mp3Path, 1, 0)
@@ -187,10 +212,9 @@ func (a *App) StartDownload(url string) error {
 	return nil
 }
 
-// processTrack searches Deezer, tags the file, and emits download:track.
 func (a *App) processTrack(mp3Path string, index int, total int) {
 	filename := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
-	// Strip playlist index prefix "01 - Title" → "Title"
+
 	if idx := strings.Index(filename, " - "); idx != -1 {
 		candidate := filename[idx+3:]
 		if candidate != "" {
@@ -205,7 +229,6 @@ func (a *App) processTrack(mp3Path string, index int, total int) {
 	}).Info("processing track")
 
 	var matched *deezer.Track
-
 	tracks, err := deezer.Search(filename)
 	if err != nil {
 		logger.Log.WithError(err).Warn("deezer search failed")
@@ -264,7 +287,6 @@ func (a *App) SelectOutputDir() (string, error) {
 	})
 }
 
-// GetLogDir returns the path to the logs directory so the frontend can open it.
 func (a *App) GetLogDir() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -277,7 +299,6 @@ func (a *App) GetLogDir() (string, error) {
 	return dir, nil
 }
 
-// LogFrontend receives a log line emitted by the frontend and writes it via logrus.
 func (a *App) LogFrontend(level, msg string) {
 	entry := logger.Log.WithField("source", "frontend")
 	switch level {

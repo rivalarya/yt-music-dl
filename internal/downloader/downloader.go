@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ type Options struct {
 	BinDir     string
 	UseDeno    bool
 	IsPlaylist bool
+	Ctx        context.Context
 	OnFile     func(path string)
 }
 
@@ -63,8 +65,7 @@ func Run(opts Options, onLog func(string)) (string, error) {
 
 	cmd := exec.Command(ytDlp, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x08000000,
+		HideWindow: true,
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -80,8 +81,32 @@ func Run(opts Options, onLog func(string)) (string, error) {
 		return "", fmt.Errorf("start yt-dlp: %w", err)
 	}
 
-	done := make(chan struct{}, 2)
+	if opts.Ctx != nil {
+		go func() {
+			<-opts.Ctx.Done()
+			if cmd.Process == nil {
+				return
+			}
 
+			kernel32 := syscall.NewLazyDLL("kernel32.dll")
+			freeConsole := kernel32.NewProc("FreeConsole")
+			attachConsole := kernel32.NewProc("AttachConsole")
+			setCtrlHandler := kernel32.NewProc("SetConsoleCtrlHandler")
+			genCtrlEvent := kernel32.NewProc("GenerateConsoleCtrlEvent")
+
+			pid := uint32(cmd.Process.Pid)
+			logger.Log.WithField("pid", pid).Info("sending CTRL_C_EVENT")
+
+			freeConsole.Call()
+			attachConsole.Call(uintptr(pid))
+			setCtrlHandler.Call(0, 1) // ignore CTRL_C in this process
+			genCtrlEvent.Call(0, 0)   // CTRL_C_EVENT to process group 0
+			freeConsole.Call()
+			setCtrlHandler.Call(0, 0) // restore
+		}()
+	}
+
+	streamDone := make(chan struct{}, 2)
 	stream := func(r interface{ Read([]byte) (int, error) }) {
 		scanner := bufio.NewScanner(r)
 		scanner.Split(scanCR)
@@ -93,12 +118,9 @@ func Run(opts Options, onLog func(string)) (string, error) {
 			logger.Log.Info("[yt-dlp] " + line)
 			onLog(line)
 
-			// Detect completed file from log line
-			// Format: [ExtractAudio] Destination: Some Title [id].mp3
 			if opts.OnFile != nil && opts.IsPlaylist && strings.HasPrefix(line, "[ExtractAudio] Destination:") {
 				dest := strings.TrimPrefix(line, "[ExtractAudio] Destination:")
 				dest = strings.TrimSpace(dest)
-				// dest may be just filename or full path depending on yt-dlp version
 				if !filepath.IsAbs(dest) {
 					dest = filepath.Join(opts.OutputDir, dest)
 				}
@@ -106,18 +128,25 @@ func Run(opts Options, onLog func(string)) (string, error) {
 				opts.OnFile(dest)
 			}
 		}
-		done <- struct{}{}
+		streamDone <- struct{}{}
 	}
 
 	go stream(stdout)
 	go stream(stderr)
 
-	<-done
-	<-done
+	<-streamDone
+	<-streamDone
 
-	if err := cmd.Wait(); err != nil {
-		logger.Log.WithError(err).Error("yt-dlp exited with error")
-		return "", fmt.Errorf("yt-dlp exited: %w", err)
+	waitErr := cmd.Wait()
+
+	if opts.Ctx != nil && opts.Ctx.Err() != nil {
+		logger.Log.Info("download cancelled by user")
+		return "", context.Canceled
+	}
+
+	if waitErr != nil {
+		logger.Log.WithError(waitErr).Error("yt-dlp exited with error")
+		return "", fmt.Errorf("yt-dlp exited: %w", waitErr)
 	}
 
 	// For single track: return the new mp3 path via diff
@@ -171,7 +200,6 @@ func snapMp3s(dir string) (map[string]struct{}, error) {
 	return m, nil
 }
 
-// IsPlaylistURL returns true if the URL points to a playlist rather than a single video.
 func IsPlaylistURL(url string) bool {
 	return strings.Contains(url, "playlist?list=") ||
 		(strings.Contains(url, "list=") && !strings.Contains(url, "watch?v="))
