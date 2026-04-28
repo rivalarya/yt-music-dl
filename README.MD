@@ -108,5 +108,5 @@ Please keep PRs focused. Open an issue first for larger changes.
 
 - [ ] macOS support
 - [ ] Linux support
-- [ ] Playlist download support
+- [x] Playlist download support
 - [ ] Download queue / batch mode
