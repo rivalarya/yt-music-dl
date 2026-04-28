@@ -105,18 +105,61 @@ func (a *App) SearchDeezer(query string) ([]deezer.Track, error) {
 	return tracks, err
 }
 
+func (a *App) SelectOutputDir() (string, error) {
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Output Directory",
+	})
+}
+
+func (a *App) SelectFile() (string, error) {
+	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select MP3 File",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "MP3 Files (*.mp3)", Pattern: "*.mp3"},
+		},
+	})
+}
+
+func (a *App) GetMp3Tags(mp3Path string) (metadata.ExistingTags, error) {
+	logger.Log.WithField("path", mp3Path).Info("reading mp3 tags")
+	return metadata.ReadTags(mp3Path)
+}
+
+func (a *App) GetLogDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	dir := logger.LogDir(filepath.Dir(exe))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func (a *App) LogFrontend(level, msg string) {
+	entry := logger.Log.WithField("source", "frontend")
+	switch level {
+	case "error":
+		entry.Error(msg)
+	case "warn":
+		entry.Warn(msg)
+	default:
+		entry.Info(msg)
+	}
+}
+
 type DownloadReady struct {
 	Path  string `json:"path"`
 	Title string `json:"title"`
 }
 
-// TrackReady is emitted per-track for both single and playlist downloads.
 type TrackReady struct {
 	Path  string        `json:"path"`
 	Title string        `json:"title"`
 	Track *deezer.Track `json:"track"`
-	Index int           `json:"index"` // 1-based, playlist position
-	Total int           `json:"total"` // 0 if unknown (single track)
+	Index int           `json:"index"`
+	Total int           `json:"total"`
 }
 
 func (a *App) CancelDownload() {
@@ -134,21 +177,17 @@ func (a *App) StartDownload(url string) error {
 	if err != nil {
 		return err
 	}
-
 	binDir, err := deps.BinDir()
 	if err != nil {
 		return err
 	}
-
 	if err := os.MkdirAll(s.OutputDir, 0755); err != nil {
 		return fmt.Errorf("create output dir: %w", err)
 	}
-
 	depStatus, err := deps.Check()
 	if err != nil {
 		return err
 	}
-
 	isPlaylist := downloader.IsPlaylistURL(url)
 	logger.Log.WithFields(map[string]interface{}{
 		"url":        url,
@@ -203,25 +242,21 @@ func (a *App) StartDownload(url string) error {
 				runtime.EventsEmit(a.ctx, "download:done", nil)
 			}()
 		}
-
 		if isPlaylist {
 			runtime.EventsEmit(a.ctx, "download:playlist-done", nil)
 		}
 	}()
-
 	return nil
 }
 
 func (a *App) processTrack(mp3Path string, index int, total int) {
 	filename := strings.TrimSuffix(filepath.Base(mp3Path), ".mp3")
-
 	if idx := strings.Index(filename, " - "); idx != -1 {
 		candidate := filename[idx+3:]
 		if candidate != "" {
 			filename = candidate
 		}
 	}
-
 	logger.Log.WithFields(map[string]interface{}{
 		"path":  mp3Path,
 		"query": filename,
@@ -237,12 +272,13 @@ func (a *App) processTrack(mp3Path string, index int, total int) {
 	}
 
 	if matched != nil {
+		ffmpegBin := a.ffmpegBin()
 		if err := metadata.Tag(mp3Path, metadata.Tags{
 			Title:    matched.Title,
 			Artist:   matched.Artist,
 			Album:    matched.Album,
 			CoverURL: matched.CoverURL,
-		}); err != nil {
+		}, ffmpegBin); err != nil {
 			logger.Log.WithError(err).Warn("tagging failed")
 		}
 	}
@@ -268,45 +304,57 @@ func (a *App) TagFile(req TagRequest) error {
 		"artist": req.Track.Artist,
 	}).Info("tagging file")
 
+	ffmpegBin := a.ffmpegBin()
 	if err := metadata.Tag(req.Mp3Path, metadata.Tags{
 		Title:    req.Track.Title,
 		Artist:   req.Track.Artist,
 		Album:    req.Track.Album,
 		CoverURL: req.Track.CoverURL,
-	}); err != nil {
+	}, ffmpegBin); err != nil {
 		logger.Log.WithError(err).Warn("tagging failed")
+		return err
 	}
 
 	runtime.EventsEmit(a.ctx, "download:done", req.Mp3Path)
 	return nil
 }
 
-func (a *App) SelectOutputDir() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Output Directory",
-	})
+// TagFileManual tags a file with arbitrary fields (used by the metadata fixer page).
+type ManualTagRequest struct {
+	Mp3Path  string `json:"mp3Path"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	Album    string `json:"album"`
+	CoverURL string `json:"coverUrl"`
 }
 
-func (a *App) GetLogDir() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	dir := logger.LogDir(filepath.Dir(exe))
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	return dir, nil
+func (a *App) TagFileManual(req ManualTagRequest) error {
+	logger.Log.WithFields(map[string]interface{}{
+		"path":   req.Mp3Path,
+		"title":  req.Title,
+		"artist": req.Artist,
+	}).Info("manual tagging file")
+
+	ffmpegBin := a.ffmpegBin()
+	return metadata.Tag(req.Mp3Path, metadata.Tags{
+		Title:    req.Title,
+		Artist:   req.Artist,
+		Album:    req.Album,
+		CoverURL: req.CoverURL,
+	}, ffmpegBin)
 }
 
-func (a *App) LogFrontend(level, msg string) {
-	entry := logger.Log.WithField("source", "frontend")
-	switch level {
-	case "error":
-		entry.Error(msg)
-	case "warn":
-		entry.Warn(msg)
-	default:
-		entry.Info(msg)
+// ffmpegBin resolves the ffmpeg binary path (bundled bin dir preferred, fallback to PATH).
+func (a *App) ffmpegBin() string {
+	binDir, err := deps.BinDir()
+	if err == nil {
+		candidate := filepath.Join(binDir, "ffmpeg.exe")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
 	}
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		return p
+	}
+	return "ffmpeg"
 }

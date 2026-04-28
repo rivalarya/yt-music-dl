@@ -10,9 +10,12 @@ import {
   StartDownload,
   CancelDownload,
   TagFile,
+  TagFileManual,
   SelectOutputDir,
+  SelectFile,
   OpenFolder,
   GetLogDir,
+  GetMp3Tags,
   LogFrontend,
 } from "../wailsjs/go/main/App";
 
@@ -28,9 +31,12 @@ export {
   StartDownload,
   CancelDownload,
   TagFile,
+  TagFileManual,
   SelectOutputDir,
+  SelectFile,
   OpenFolder,
   GetLogDir,
+  GetMp3Tags,
   LogFrontend,
 };
 
@@ -65,4 +71,10 @@ export type TrackReady = {
 export type Settings = {
   outputDir: string;
   cookiePath: string;
+};
+
+export type ExistingTags = {
+  title: string;
+  artist: string;
+  album: string;
 };

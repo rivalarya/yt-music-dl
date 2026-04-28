@@ -3,7 +3,6 @@ module yt-music-dl
 go 1.25.0
 
 require (
-	github.com/bogem/id3v2/v2 v2.1.4
 	github.com/sirupsen/logrus v1.9.4
 	github.com/wailsapp/wails/v2 v2.12.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

@@ -8,12 +8,24 @@ import { StartDownload, CancelDownload, LogFrontend, CheckDeps } from "@/lib/wai
 import { useWailsEvent } from "@/lib/useWailsEvent";
 import type { Track } from "@/lib/wails";
 import Image from "next/image";
-import { Info, Settings, Bug, AlertTriangle, Music, Square } from "lucide-react";
+import {
+  Info,
+  Settings,
+  Bug,
+  AlertTriangle,
+  Music,
+  Square,
+  Tag,
+  Wrench,
+} from "lucide-react";
 import { SettingsModal } from "@/components/SettingsModal";
 import { AboutModal } from "@/components/AboutModal";
 import { BugReportModal } from "@/components/BugReportModal";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 type TrackPhase = "tagging" | "done" | "error";
+
 type TrackItem = {
   index: number;
   path: string;
@@ -32,13 +44,19 @@ function isPlaylistUrl(url: string): boolean {
 }
 
 function TrackCard({ item }: { item: TrackItem }) {
+  const router = useRouter();
   const badgeVariant = item.phase === "done" ? "outline" : "secondary";
   const badgeLabel =
     item.phase === "tagging"
       ? "Tagging..."
       : item.phase === "done"
-        ? "Done"
-        : "Error";
+      ? "Done"
+      : "Error";
+
+  function handleFixMetadata() {
+    const params = new URLSearchParams({ path: item.path, title: item.title });
+    router.push(`/metadata?${params.toString()}`);
+  }
 
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-accent/20">
@@ -67,9 +85,21 @@ function TrackCard({ item }: { item: TrackItem }) {
           <span className="text-xs text-muted-foreground">No metadata found</span>
         )}
       </div>
-      <Badge variant={badgeVariant} className="flex-shrink-0 ml-auto">
-        {badgeLabel}
-      </Badge>
+
+      <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+        {!item.track && item.phase === "done" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleFixMetadata}
+            className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Wrench size={11} />
+            Fix
+          </Button>
+        )}
+        <Badge variant={badgeVariant}>{badgeLabel}</Badge>
+      </div>
     </div>
   );
 }
@@ -79,7 +109,10 @@ export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [tracks, setTracks] = useState<TrackItem[]>([]);
   const [dlPercent, setDlPercent] = useState(0);
-  const [playlistInfo, setPlaylistInfo] = useState<{ current: number; total: number } | null>(null);
+  const [playlistInfo, setPlaylistInfo] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [bugOpen, setBugOpen] = useState(false);
@@ -87,7 +120,7 @@ export default function Home() {
   const [stopping, setStopping] = useState(false);
 
   const logToBackend = useCallback((level: string, msg: string) => {
-    LogFrontend(level, msg).catch(() => { });
+    LogFrontend(level, msg).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -98,7 +131,7 @@ export default function Home() {
         if (!status.ffmpeg) missing.push("ffmpeg");
         setMissingDeps(missing);
       })
-      .catch(() => { });
+      .catch(() => {});
   }, []);
 
   function handleSettingsClose() {
@@ -110,15 +143,14 @@ export default function Home() {
         if (!status.ffmpeg) missing.push("ffmpeg");
         setMissingDeps(missing);
       })
-      .catch(() => { });
+      .catch(() => {});
   }
 
   const onDownloadLog = useCallback((line: unknown) => {
     const text = String(line);
     const pctMatch = text.match(/\[download\]\s+([\d.]+)%/);
-    if (pctMatch) {
-      setDlPercent(Math.round(parseFloat(pctMatch[1])));
-    }
+    if (pctMatch) setDlPercent(Math.round(parseFloat(pctMatch[1])));
+
     const itemMatch = text.match(/Downloading item (\d+) of (\d+)/);
     if (itemMatch) {
       setPlaylistInfo({
@@ -225,6 +257,13 @@ export default function Home() {
       <div className="border-b border-border px-6 py-4 flex items-center justify-between">
         <span className="font-semibold tracking-tight">YT Music Downloader</span>
         <div className="flex items-center gap-4">
+          <Link
+            href="/metadata"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Metadata fixer"
+          >
+            <Tag size={24} />
+          </Link>
           <button
             onClick={() => setBugOpen(true)}
             className="text-muted-foreground hover:text-foreground transition-colors"
@@ -341,8 +380,8 @@ export default function Home() {
                   {phase === "cancelled"
                     ? `Stopped — ${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
                     : phase === "done"
-                      ? `${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
-                      : `${doneCount} of ${playlistInfo?.total ?? "?"} tagged`}
+                    ? `${doneCount} track${doneCount !== 1 ? "s" : ""} downloaded`
+                    : `${doneCount} of ${playlistInfo?.total ?? "?"} tagged`}
                 </span>
               </div>
             )}
