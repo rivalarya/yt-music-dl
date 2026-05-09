@@ -45,7 +45,7 @@ export function CookieModal({ open, onClose, onSaved }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg overflow-hidden">
         <DialogHeader>
           <DialogTitle>YouTube Cookie File</DialogTitle>
           <DialogDescription>
@@ -53,7 +53,7 @@ export function CookieModal({ open, onClose, onSaved }: Props) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 min-w-0">
           <div className="rounded-lg border border-border bg-muted/40 p-4">
             <p className="text-xs font-medium text-muted-foreground mb-2">How to get your cookies</p>
             <pre className="text-xs text-foreground whitespace-pre-wrap leading-relaxed">{HOW_TO}</pre>
