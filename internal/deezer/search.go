@@ -25,7 +25,7 @@ type deezerTrack struct {
 	} `json:"artist"`
 	Album struct {
 		Title string `json:"title"`
-		Cover string `json:"cover_medium"`
+		Cover string `json:"cover_xl"`
 	} `json:"album"`
 	Duration int `json:"duration"`
 }
